@@ -1,5 +1,4 @@
 import { sql } from '@vercel/postgres';
-import { randomUUID } from 'crypto';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -92,18 +91,6 @@ function toEmpresa(r: any): Empresa {
     name: r.name,
     createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
   };
-}
-
-// ─── Bootstrap ────────────────────────────────────────────────────────────────
-
-export async function bootstrap(): Promise<void> {
-  const username = process.env.SUPERADMIN_USERNAME || 'superadmin';
-  const password = process.env.SUPERADMIN_PASSWORD || 'superadmin2026';
-  await sql`
-    INSERT INTO users (id, username, password, display_name, role, empresa_slug, active)
-    VALUES (${randomUUID()}, ${username}, ${password}, 'Super Admin', 'superadmin', '', true)
-    ON CONFLICT (username) DO NOTHING
-  `;
 }
 
 // ─── Users ────────────────────────────────────────────────────────────────────

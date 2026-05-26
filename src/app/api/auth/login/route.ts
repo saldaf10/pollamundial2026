@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { bootstrap, getUserByUsername, addSession } from '@/lib/dataStore';
+import { getUserByUsername, addSession } from '@/lib/dataStore';
 import { randomUUID } from 'crypto';
 
 export async function POST(req: NextRequest) {
-  await bootstrap();
   const { username, password } = await req.json();
   if (!username || !password)
     return NextResponse.json({ error: 'Usuario y contraseña requeridos' }, { status: 400 });

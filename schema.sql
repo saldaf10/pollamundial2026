@@ -61,3 +61,19 @@ CREATE TABLE IF NOT EXISTS standings (
   first      TEXT NOT NULL,
   second     TEXT NOT NULL
 );
+
+-- ── Superadmin ──────────────────────────────────────────────────────────────
+-- Cambia 'TU_CLAVE_AQUI' por la contraseña que quieras antes de ejecutar.
+-- Solo se ejecuta si no existe el usuario (ON CONFLICT DO NOTHING).
+
+INSERT INTO users (id, username, password, display_name, role, empresa_slug, active)
+VALUES (
+  gen_random_uuid()::text,
+  'superadmin',
+  'TU_CLAVE_AQUI',
+  'Super Admin',
+  'superadmin',
+  '',
+  true
+)
+ON CONFLICT (username) DO NOTHING;
