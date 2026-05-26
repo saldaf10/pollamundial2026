@@ -12,17 +12,17 @@ const CLOSED_RESPONSE = NextResponse.json(
 );
 
 export async function GET(req: NextRequest) {
-  const session = getSessionFromRequest(req.headers);
+  const session = await getSessionFromRequest(req.headers);
   if (!session || session.role !== 'participant')
     return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
   return NextResponse.json({
-    predictions: getScorePredictions(session.empresaSlug, session.username),
-    groupPredictions: getGroupPredictions(session.empresaSlug, session.username),
+    predictions: await getScorePredictions(session.empresaSlug, session.username),
+    groupPredictions: await getGroupPredictions(session.empresaSlug, session.username),
   });
 }
 
 export async function POST(req: NextRequest) {
-  const session = getSessionFromRequest(req.headers);
+  const session = await getSessionFromRequest(req.headers);
   if (!session || session.role !== 'participant')
     return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
 
@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
     const { group, first, second } = body;
     if (!group || !first || !second)
       return NextResponse.json({ error: 'Datos incompletos' }, { status: 400 });
-    saveGroupPrediction(session.empresaSlug, session.username, group, { first, second });
+    await saveGroupPrediction(session.empresaSlug, session.username, group, { first, second });
     return NextResponse.json({ ok: true });
   }
 
@@ -44,9 +44,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'matchId requerido' }, { status: 400 });
   if (!GROUP_MATCH_IDS.has(String(matchId)))
     return NextResponse.json({ error: 'Solo se permiten pronósticos de fase de grupos' }, { status: 403 });
-  if (getResults()[String(matchId)]?.locked)
+  const results = await getResults();
+  if (results[String(matchId)]?.locked)
     return NextResponse.json({ error: 'Partido bloqueado' }, { status: 403 });
-  saveScorePrediction(session.empresaSlug, session.username, Number(matchId),
+  await saveScorePrediction(session.empresaSlug, session.username, Number(matchId),
     { home: Number(home), away: Number(away), ...(winner ? { winner } : {}) });
   return NextResponse.json({ ok: true });
 }

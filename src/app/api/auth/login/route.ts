@@ -3,17 +3,17 @@ import { bootstrap, getUserByUsername, addSession } from '@/lib/dataStore';
 import { randomUUID } from 'crypto';
 
 export async function POST(req: NextRequest) {
-  bootstrap();
+  await bootstrap();
   const { username, password } = await req.json();
   if (!username || !password)
     return NextResponse.json({ error: 'Usuario y contraseña requeridos' }, { status: 400 });
 
-  const user = getUserByUsername(username.trim().toLowerCase());
+  const user = await getUserByUsername(username.trim().toLowerCase());
   if (!user || !user.active || user.password !== password)
     return NextResponse.json({ error: 'Usuario o contraseña incorrectos' }, { status: 401 });
 
   const token = randomUUID();
-  addSession({
+  await addSession({
     token,
     userId: user.id,
     username: user.username,

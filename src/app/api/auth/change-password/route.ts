@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSessionFromRequest, getUserByUsername, updateUser } from '@/lib/dataStore';
 
 export async function POST(req: NextRequest) {
-  const session = getSessionFromRequest(req.headers);
+  const session = await getSessionFromRequest(req.headers);
   if (!session) return NextResponse.json({ error: 'No autenticado' }, { status: 401 });
 
   const { currentPassword, newPassword } = await req.json();
@@ -11,10 +11,10 @@ export async function POST(req: NextRequest) {
   if (newPassword.length < 6)
     return NextResponse.json({ error: 'La contraseña debe tener al menos 6 caracteres' }, { status: 400 });
 
-  const user = getUserByUsername(session.username);
+  const user = await getUserByUsername(session.username);
   if (!user || user.password !== currentPassword)
     return NextResponse.json({ error: 'Contraseña actual incorrecta' }, { status: 401 });
 
-  updateUser(user.id, { password: newPassword });
+  await updateUser(user.id, { password: newPassword });
   return NextResponse.json({ ok: true });
 }

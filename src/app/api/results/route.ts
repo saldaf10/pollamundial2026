@@ -3,11 +3,11 @@ import { getResults, setMatchResult, setMatchLocked, getGroupStandings, setGroup
          getSessionFromRequest } from '@/lib/dataStore';
 
 export async function GET() {
-  return NextResponse.json({ results: getResults(), standings: getGroupStandings() });
+  return NextResponse.json({ results: await getResults(), standings: await getGroupStandings() });
 }
 
 export async function POST(req: NextRequest) {
-  const session = getSessionFromRequest(req.headers);
+  const session = await getSessionFromRequest(req.headers);
   if (session?.role !== 'superadmin')
     return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
 
@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
     const { group, first, second } = body;
     if (!group || !first || !second)
       return NextResponse.json({ error: 'Datos incompletos' }, { status: 400 });
-    setGroupStanding(group, first, second);
+    await setGroupStanding(group, first, second);
     return NextResponse.json({ ok: true });
   }
 
@@ -25,10 +25,9 @@ export async function POST(req: NextRequest) {
   if (matchId === undefined)
     return NextResponse.json({ error: 'matchId requerido' }, { status: 400 });
   if (home !== undefined && away !== undefined) {
-    setMatchResult(Number(matchId), Number(home), Number(away), winner || undefined);
-    setMatchLocked(Number(matchId), true);
+    await setMatchResult(Number(matchId), Number(home), Number(away), winner || undefined);
   } else if (locked !== undefined) {
-    setMatchLocked(Number(matchId), Boolean(locked));
+    await setMatchLocked(Number(matchId), Boolean(locked));
   }
   return NextResponse.json({ ok: true });
 }

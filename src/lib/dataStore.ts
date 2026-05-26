@@ -1,27 +1,5 @@
-import fs from 'fs';
-import path from 'path';
+import { sql } from '@vercel/postgres';
 import { randomUUID } from 'crypto';
-
-const DATA_DIR     = path.join(process.cwd(), 'data');
-const EMPRESAS_DIR = path.join(DATA_DIR, 'empresas');
-
-function ensureDir(dir: string) {
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-}
-
-function readJSON<T>(file: string, fallback: T): T {
-  try { return JSON.parse(fs.readFileSync(file, 'utf-8')) as T; }
-  catch { return fallback; }
-}
-
-function writeJSON(file: string, data: unknown): void {
-  ensureDir(path.dirname(file));
-  fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf-8');
-}
-
-function ep(slug: string, file: string): string {
-  return path.join(EMPRESAS_DIR, slug, file);
-}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -77,127 +55,259 @@ export type GroupPredMap = Record<string, Record<string, GroupPosition>>;
 export type ResultsMap   = Record<string, ResultEntry>;
 export type StandingsMap = Record<string, GroupPosition>;
 
-// ─── Bootstrap (crea superadmin si no existe) ─────────────────────────────────
+// ─── Row converters ───────────────────────────────────────────────────────────
 
-export function bootstrap(): void {
-  const users = getUsers();
-  if (!users.some(u => u.role === 'superadmin')) {
-    addUser({
-      id: randomUUID(),
-      username: process.env.SUPERADMIN_USERNAME || 'superadmin',
-      password: process.env.SUPERADMIN_PASSWORD || 'superadmin2026',
-      displayName: 'Super Admin',
-      role: 'superadmin',
-      empresaSlug: '',
-      active: true,
-      createdAt: new Date().toISOString(),
-    });
-  }
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function toUser(r: any): User {
+  return {
+    id: r.id,
+    username: r.username,
+    password: r.password,
+    displayName: r.display_name,
+    role: r.role,
+    empresaSlug: r.empresa_slug,
+    active: r.active,
+    createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function toSession(r: any): SessionRecord {
+  return {
+    token: r.token,
+    userId: r.user_id,
+    username: r.username,
+    role: r.role,
+    empresaSlug: r.empresa_slug,
+    displayName: r.display_name,
+    createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function toEmpresa(r: any): Empresa {
+  return {
+    id: r.id,
+    slug: r.slug,
+    name: r.name,
+    createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
+  };
+}
+
+// ─── Bootstrap ────────────────────────────────────────────────────────────────
+
+export async function bootstrap(): Promise<void> {
+  const username = process.env.SUPERADMIN_USERNAME || 'superadmin';
+  const password = process.env.SUPERADMIN_PASSWORD || 'superadmin2026';
+  await sql`
+    INSERT INTO users (id, username, password, display_name, role, empresa_slug, active)
+    VALUES (${randomUUID()}, ${username}, ${password}, 'Super Admin', 'superadmin', '', true)
+    ON CONFLICT (username) DO NOTHING
+  `;
 }
 
 // ─── Users ────────────────────────────────────────────────────────────────────
 
-const USERS_FILE = path.join(DATA_DIR, 'users.json');
-
-export function getUsers(): User[]                                        { return readJSON<User[]>(USERS_FILE, []); }
-export function getUserByUsername(username: string): User | undefined     { return getUsers().find(u => u.username === username); }
-export function getUserById(id: string): User | undefined                 { return getUsers().find(u => u.id === id); }
-export function getUsersByEmpresa(slug: string): User[]                   { return getUsers().filter(u => u.empresaSlug === slug); }
-export function saveUsers(users: User[]): void                            { writeJSON(USERS_FILE, users); }
-
-export function addUser(user: User): void {
-  const all = getUsers(); all.push(user); saveUsers(all);
+export async function getUserByUsername(username: string): Promise<User | null> {
+  const { rows } = await sql`SELECT * FROM users WHERE username = ${username} LIMIT 1`;
+  return rows.length ? toUser(rows[0]) : null;
 }
 
-export function updateUser(id: string, updates: Partial<Omit<User, 'id' | 'createdAt'>>): boolean {
-  const all = getUsers();
-  const idx = all.findIndex(u => u.id === id);
-  if (idx < 0) return false;
-  Object.assign(all[idx], updates);
-  saveUsers(all);
-  return true;
+export async function getUserById(id: string): Promise<User | null> {
+  const { rows } = await sql`SELECT * FROM users WHERE id = ${id} LIMIT 1`;
+  return rows.length ? toUser(rows[0]) : null;
+}
+
+export async function getUsersByEmpresa(slug: string): Promise<User[]> {
+  const { rows } = await sql`SELECT * FROM users WHERE empresa_slug = ${slug} ORDER BY created_at`;
+  return rows.map(toUser);
+}
+
+export async function addUser(user: User): Promise<void> {
+  await sql`
+    INSERT INTO users (id, username, password, display_name, role, empresa_slug, active, created_at)
+    VALUES (${user.id}, ${user.username}, ${user.password}, ${user.displayName},
+            ${user.role}, ${user.empresaSlug}, ${user.active}, ${user.createdAt})
+  `;
+}
+
+export async function updateUser(id: string, updates: Partial<Pick<User, 'password' | 'displayName' | 'active'>>): Promise<void> {
+  if (updates.password   !== undefined) await sql`UPDATE users SET password     = ${updates.password}   WHERE id = ${id}`;
+  if (updates.displayName !== undefined) await sql`UPDATE users SET display_name = ${updates.displayName} WHERE id = ${id}`;
+  if (updates.active      !== undefined) await sql`UPDATE users SET active       = ${updates.active}      WHERE id = ${id}`;
+}
+
+export async function deleteUsersByEmpresa(slug: string): Promise<void> {
+  await sql`DELETE FROM users WHERE empresa_slug = ${slug}`;
 }
 
 // ─── Sessions ─────────────────────────────────────────────────────────────────
 
-const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
-
-export function getSessions(): SessionRecord[]                             { return readJSON<SessionRecord[]>(SESSIONS_FILE, []); }
-export function getSession(token: string): SessionRecord | undefined       { return getSessions().find(s => s.token === token); }
-
-export function addSession(session: SessionRecord): void {
-  const all = getSessions(); all.push(session);
-  // Limpiar sesiones viejas (más de 30 días)
-  const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  const cleaned = all.filter(s => s.createdAt > cutoff);
-  writeJSON(SESSIONS_FILE, cleaned);
+export async function getSession(token: string): Promise<SessionRecord | null> {
+  const { rows } = await sql`SELECT * FROM sessions WHERE token = ${token} LIMIT 1`;
+  return rows.length ? toSession(rows[0]) : null;
 }
 
-export function removeSession(token: string): void {
-  const all = getSessions().filter(s => s.token !== token);
-  writeJSON(SESSIONS_FILE, all);
+export async function addSession(session: SessionRecord): Promise<void> {
+  const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  await sql`DELETE FROM sessions WHERE created_at < ${cutoff}`;
+  await sql`
+    INSERT INTO sessions (token, user_id, username, role, empresa_slug, display_name, created_at)
+    VALUES (${session.token}, ${session.userId}, ${session.username}, ${session.role},
+            ${session.empresaSlug}, ${session.displayName}, ${session.createdAt})
+    ON CONFLICT (token) DO NOTHING
+  `;
+}
+
+export async function removeSession(token: string): Promise<void> {
+  await sql`DELETE FROM sessions WHERE token = ${token}`;
+}
+
+export async function getSessionFromRequest(headers: Headers): Promise<SessionRecord | null> {
+  const token = headers.get('x-session-token');
+  if (!token) return null;
+  return getSession(token);
 }
 
 // ─── Empresas ─────────────────────────────────────────────────────────────────
 
-const EMPRESAS_FILE = path.join(DATA_DIR, 'empresas.json');
-
-export function getEmpresas(): Empresa[]                                  { return readJSON<Empresa[]>(EMPRESAS_FILE, []); }
-export function getEmpresa(slug: string): Empresa | undefined             { return getEmpresas().find(e => e.slug === slug); }
-export function saveEmpresas(list: Empresa[]): void                       { writeJSON(EMPRESAS_FILE, list); }
-export function addEmpresa(e: Empresa): void                              { const all = getEmpresas(); all.push(e); saveEmpresas(all); }
-
-// ─── Score Predictions (empresa-scoped, keyed by username) ───────────────────
-
-export function getAllScorePredictions(slug: string): ScorePredMap        { return readJSON<ScorePredMap>(ep(slug, 'predictions.json'), {}); }
-export function getScorePredictions(slug: string, username: string): Record<string, ScorePrediction> {
-  return getAllScorePredictions(slug)[username] || {};
-}
-export function saveScorePrediction(slug: string, username: string, matchId: number, pred: ScorePrediction): void {
-  const all = getAllScorePredictions(slug);
-  if (!all[username]) all[username] = {};
-  all[username][String(matchId)] = pred;
-  writeJSON(ep(slug, 'predictions.json'), all);
+export async function getEmpresas(): Promise<Empresa[]> {
+  const { rows } = await sql`SELECT * FROM empresas ORDER BY created_at`;
+  return rows.map(toEmpresa);
 }
 
-// ─── Group Position Predictions (empresa-scoped, keyed by username) ──────────
-
-export function getAllGroupPredictions(slug: string): GroupPredMap        { return readJSON<GroupPredMap>(ep(slug, 'group_preds.json'), {}); }
-export function getGroupPredictions(slug: string, username: string): Record<string, GroupPosition> {
-  return getAllGroupPredictions(slug)[username] || {};
+export async function getEmpresa(slug: string): Promise<Empresa | null> {
+  const { rows } = await sql`SELECT * FROM empresas WHERE slug = ${slug} LIMIT 1`;
+  return rows.length ? toEmpresa(rows[0]) : null;
 }
-export function saveGroupPrediction(slug: string, username: string, group: string, pos: GroupPosition): void {
-  const all = getAllGroupPredictions(slug);
-  if (!all[username]) all[username] = {};
-  all[username][group] = pos;
-  writeJSON(ep(slug, 'group_preds.json'), all);
+
+export async function addEmpresa(e: Empresa): Promise<void> {
+  await sql`INSERT INTO empresas (id, slug, name, created_at) VALUES (${e.id}, ${e.slug}, ${e.name}, ${e.createdAt})`;
+}
+
+export async function deleteEmpresa(id: string): Promise<void> {
+  await sql`DELETE FROM empresas WHERE id = ${id}`;
+}
+
+export async function updateEmpresaName(id: string, name: string): Promise<void> {
+  await sql`UPDATE empresas SET name = ${name} WHERE id = ${id}`;
+}
+
+// ─── Score Predictions ────────────────────────────────────────────────────────
+
+export async function getScorePredictions(empresaSlug: string, username: string): Promise<Record<string, ScorePrediction>> {
+  const { rows } = await sql`
+    SELECT match_id, home, away, winner FROM predictions
+    WHERE empresa_slug = ${empresaSlug} AND username = ${username}
+  `;
+  const out: Record<string, ScorePrediction> = {};
+  for (const r of rows) {
+    out[String(r.match_id)] = { home: r.home, away: r.away, ...(r.winner ? { winner: r.winner as 'home' | 'away' } : {}) };
+  }
+  return out;
+}
+
+export async function saveScorePrediction(empresaSlug: string, username: string, matchId: number, pred: ScorePrediction): Promise<void> {
+  await sql`
+    INSERT INTO predictions (empresa_slug, username, match_id, home, away, winner)
+    VALUES (${empresaSlug}, ${username}, ${matchId}, ${pred.home}, ${pred.away}, ${pred.winner ?? null})
+    ON CONFLICT (empresa_slug, username, match_id)
+    DO UPDATE SET home = EXCLUDED.home, away = EXCLUDED.away, winner = EXCLUDED.winner
+  `;
+}
+
+export async function getAllScorePredictions(empresaSlug: string): Promise<ScorePredMap> {
+  const { rows } = await sql`
+    SELECT username, match_id, home, away, winner FROM predictions WHERE empresa_slug = ${empresaSlug}
+  `;
+  const out: ScorePredMap = {};
+  for (const r of rows) {
+    if (!out[r.username]) out[r.username] = {};
+    out[r.username][String(r.match_id)] = { home: r.home, away: r.away, ...(r.winner ? { winner: r.winner as 'home' | 'away' } : {}) };
+  }
+  return out;
+}
+
+// ─── Group Predictions ────────────────────────────────────────────────────────
+
+export async function getGroupPredictions(empresaSlug: string, username: string): Promise<Record<string, GroupPosition>> {
+  const { rows } = await sql`
+    SELECT group_name, first, second FROM group_predictions
+    WHERE empresa_slug = ${empresaSlug} AND username = ${username}
+  `;
+  const out: Record<string, GroupPosition> = {};
+  for (const r of rows) out[r.group_name] = { first: r.first, second: r.second };
+  return out;
+}
+
+export async function saveGroupPrediction(empresaSlug: string, username: string, group: string, pos: GroupPosition): Promise<void> {
+  await sql`
+    INSERT INTO group_predictions (empresa_slug, username, group_name, first, second)
+    VALUES (${empresaSlug}, ${username}, ${group}, ${pos.first}, ${pos.second})
+    ON CONFLICT (empresa_slug, username, group_name)
+    DO UPDATE SET first = EXCLUDED.first, second = EXCLUDED.second
+  `;
+}
+
+export async function getAllGroupPredictions(empresaSlug: string): Promise<GroupPredMap> {
+  const { rows } = await sql`
+    SELECT username, group_name, first, second FROM group_predictions WHERE empresa_slug = ${empresaSlug}
+  `;
+  const out: GroupPredMap = {};
+  for (const r of rows) {
+    if (!out[r.username]) out[r.username] = {};
+    out[r.username][r.group_name] = { first: r.first, second: r.second };
+  }
+  return out;
+}
+
+export async function deletePredictionsByEmpresa(slug: string): Promise<void> {
+  await sql`DELETE FROM predictions WHERE empresa_slug = ${slug}`;
+  await sql`DELETE FROM group_predictions WHERE empresa_slug = ${slug}`;
 }
 
 // ─── Results (global) ─────────────────────────────────────────────────────────
 
-export function getResults(): ResultsMap                                   { return readJSON<ResultsMap>(path.join(DATA_DIR, 'results.json'), {}); }
-export function setMatchResult(matchId: number, home: number, away: number, winner?: 'home' | 'away'): void {
-  const r = getResults();
-  r[String(matchId)] = { home, away, played: true, locked: r[String(matchId)]?.locked ?? false, ...(winner ? { winner } : {}) };
-  writeJSON(path.join(DATA_DIR, 'results.json'), r);
-}
-export function setMatchLocked(matchId: number, locked: boolean): void {
-  const r = getResults();
-  r[String(matchId)] = { ...(r[String(matchId)] || { home: 0, away: 0, played: false }), locked };
-  writeJSON(path.join(DATA_DIR, 'results.json'), r);
+export async function getResults(): Promise<ResultsMap> {
+  const { rows } = await sql`SELECT * FROM results`;
+  const out: ResultsMap = {};
+  for (const r of rows) {
+    out[String(r.match_id)] = { home: r.home, away: r.away, played: r.played, locked: r.locked,
+      ...(r.winner ? { winner: r.winner as 'home' | 'away' } : {}) };
+  }
+  return out;
 }
 
-// ─── Group Standings (global) ─────────────────────────────────────────────────
-
-export function getGroupStandings(): StandingsMap                          { return readJSON<StandingsMap>(path.join(DATA_DIR, 'group_standings.json'), {}); }
-export function setGroupStanding(group: string, first: string, second: string): void {
-  const s = getGroupStandings(); s[group] = { first, second }; writeJSON(path.join(DATA_DIR, 'group_standings.json'), s);
+export async function setMatchResult(matchId: number, home: number, away: number, winner?: 'home' | 'away'): Promise<void> {
+  await sql`
+    INSERT INTO results (match_id, home, away, played, locked, winner)
+    VALUES (${matchId}, ${home}, ${away}, true, true, ${winner ?? null})
+    ON CONFLICT (match_id)
+    DO UPDATE SET home = EXCLUDED.home, away = EXCLUDED.away, played = true, locked = true, winner = EXCLUDED.winner
+  `;
 }
 
-// ─── Session helper (para rutas API) ─────────────────────────────────────────
+export async function setMatchLocked(matchId: number, locked: boolean): Promise<void> {
+  await sql`
+    INSERT INTO results (match_id, home, away, played, locked)
+    VALUES (${matchId}, 0, 0, false, ${locked})
+    ON CONFLICT (match_id)
+    DO UPDATE SET locked = EXCLUDED.locked
+  `;
+}
 
-export function getSessionFromRequest(headers: Headers): SessionRecord | null {
-  const token = headers.get('x-session-token');
-  if (!token) return null;
-  return getSession(token) ?? null;
+// ─── Standings (global) ───────────────────────────────────────────────────────
+
+export async function getGroupStandings(): Promise<StandingsMap> {
+  const { rows } = await sql`SELECT * FROM standings`;
+  const out: StandingsMap = {};
+  for (const r of rows) out[r.group_name] = { first: r.first, second: r.second };
+  return out;
+}
+
+export async function setGroupStanding(group: string, first: string, second: string): Promise<void> {
+  await sql`
+    INSERT INTO standings (group_name, first, second) VALUES (${group}, ${first}, ${second})
+    ON CONFLICT (group_name) DO UPDATE SET first = EXCLUDED.first, second = EXCLUDED.second
+  `;
 }
