@@ -47,12 +47,20 @@ export interface ResultEntry {
 export interface GroupPosition {
   first: string;
   second: string;
+  third?: string;
+}
+
+export interface GroupStanding {
+  first: string;
+  second: string;
+  third?: string;
+  thirdClassified?: boolean;
 }
 
 export type ScorePredMap = Record<string, Record<string, ScorePrediction>>;
 export type GroupPredMap = Record<string, Record<string, GroupPosition>>;
 export type ResultsMap   = Record<string, ResultEntry>;
-export type StandingsMap = Record<string, GroupPosition>;
+export type StandingsMap = Record<string, GroupStanding>;
 
 // ─── Row converters ───────────────────────────────────────────────────────────
 
@@ -219,31 +227,31 @@ export async function getAllScorePredictions(empresaSlug: string): Promise<Score
 
 export async function getGroupPredictions(empresaSlug: string, username: string): Promise<Record<string, GroupPosition>> {
   const { rows } = await sql`
-    SELECT group_name, first, second FROM group_predictions
+    SELECT group_name, first, second, third FROM group_predictions
     WHERE empresa_slug = ${empresaSlug} AND username = ${username}
   `;
   const out: Record<string, GroupPosition> = {};
-  for (const r of rows) out[r.group_name] = { first: r.first, second: r.second };
+  for (const r of rows) out[r.group_name] = { first: r.first, second: r.second, third: r.third ?? undefined };
   return out;
 }
 
 export async function saveGroupPrediction(empresaSlug: string, username: string, group: string, pos: GroupPosition): Promise<void> {
   await sql`
-    INSERT INTO group_predictions (empresa_slug, username, group_name, first, second)
-    VALUES (${empresaSlug}, ${username}, ${group}, ${pos.first}, ${pos.second})
+    INSERT INTO group_predictions (empresa_slug, username, group_name, first, second, third)
+    VALUES (${empresaSlug}, ${username}, ${group}, ${pos.first}, ${pos.second}, ${pos.third ?? null})
     ON CONFLICT (empresa_slug, username, group_name)
-    DO UPDATE SET first = EXCLUDED.first, second = EXCLUDED.second
+    DO UPDATE SET first = EXCLUDED.first, second = EXCLUDED.second, third = EXCLUDED.third
   `;
 }
 
 export async function getAllGroupPredictions(empresaSlug: string): Promise<GroupPredMap> {
   const { rows } = await sql`
-    SELECT username, group_name, first, second FROM group_predictions WHERE empresa_slug = ${empresaSlug}
+    SELECT username, group_name, first, second, third FROM group_predictions WHERE empresa_slug = ${empresaSlug}
   `;
   const out: GroupPredMap = {};
   for (const r of rows) {
     if (!out[r.username]) out[r.username] = {};
-    out[r.username][r.group_name] = { first: r.first, second: r.second };
+    out[r.username][r.group_name] = { first: r.first, second: r.second, third: r.third ?? undefined };
   }
   return out;
 }
@@ -288,13 +296,23 @@ export async function setMatchLocked(matchId: number, locked: boolean): Promise<
 export async function getGroupStandings(): Promise<StandingsMap> {
   const { rows } = await sql`SELECT * FROM standings`;
   const out: StandingsMap = {};
-  for (const r of rows) out[r.group_name] = { first: r.first, second: r.second };
+  for (const r of rows) out[r.group_name] = {
+    first: r.first, second: r.second,
+    third: r.third ?? undefined,
+    thirdClassified: r.third_classified ?? false,
+  };
   return out;
 }
 
-export async function setGroupStanding(group: string, first: string, second: string): Promise<void> {
+export async function setGroupStanding(
+  group: string, first: string, second: string,
+  third?: string, thirdClassified?: boolean
+): Promise<void> {
   await sql`
-    INSERT INTO standings (group_name, first, second) VALUES (${group}, ${first}, ${second})
-    ON CONFLICT (group_name) DO UPDATE SET first = EXCLUDED.first, second = EXCLUDED.second
+    INSERT INTO standings (group_name, first, second, third, third_classified)
+    VALUES (${group}, ${first}, ${second}, ${third ?? null}, ${thirdClassified ?? false})
+    ON CONFLICT (group_name) DO UPDATE SET
+      first = EXCLUDED.first, second = EXCLUDED.second,
+      third = EXCLUDED.third, third_classified = EXCLUDED.third_classified
   `;
 }

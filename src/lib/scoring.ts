@@ -73,13 +73,15 @@ export function calcClassifiedPoints(
 }
 
 export function calcGroupPositionPoints(
-  predicted: { first: string; second: string },
-  actual: { first: string; second: string }
+  predicted: { first: string; second: string; third?: string },
+  actual: { first: string; second: string; third?: string; thirdClassified?: boolean }
 ): number {
   let pts = 0;
   if (predicted.first === actual.first) pts += GROUP_POS_RULES.exact;
   else if (predicted.first === actual.second) pts += GROUP_POS_RULES.wrong;
   if (predicted.second === actual.second) pts += GROUP_POS_RULES.exact;
   else if (predicted.second === actual.first) pts += GROUP_POS_RULES.wrong;
+  if (predicted.third && actual.third && predicted.third === actual.third && actual.thirdClassified)
+    pts += GROUP_POS_RULES.exact;
   return pts;
 }

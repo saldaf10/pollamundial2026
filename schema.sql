@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS group_predictions (
   group_name   TEXT NOT NULL,
   first        TEXT NOT NULL,
   second       TEXT NOT NULL,
+  third        TEXT,
   PRIMARY KEY (empresa_slug, username, group_name)
 );
 
@@ -57,10 +58,17 @@ CREATE TABLE IF NOT EXISTS results (
 );
 
 CREATE TABLE IF NOT EXISTS standings (
-  group_name TEXT PRIMARY KEY,
-  first      TEXT NOT NULL,
-  second     TEXT NOT NULL
+  group_name        TEXT PRIMARY KEY,
+  first             TEXT NOT NULL,
+  second            TEXT NOT NULL,
+  third             TEXT,
+  third_classified  BOOLEAN NOT NULL DEFAULT false
 );
+
+-- Migration: run these if the tables already exist
+-- ALTER TABLE group_predictions ADD COLUMN IF NOT EXISTS third TEXT;
+-- ALTER TABLE standings ADD COLUMN IF NOT EXISTS third TEXT;
+-- ALTER TABLE standings ADD COLUMN IF NOT EXISTS third_classified BOOLEAN NOT NULL DEFAULT false;
 
 -- ── Superadmin ──────────────────────────────────────────────────────────────
 -- Cambia 'TU_CLAVE_AQUI' por la contraseña que quieras antes de ejecutar.

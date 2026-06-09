@@ -14,10 +14,10 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
 
   if (body.type === 'group_standing') {
-    const { group, first, second } = body;
+    const { group, first, second, third, thirdClassified } = body;
     if (!group || !first || !second)
       return NextResponse.json({ error: 'Datos incompletos' }, { status: 400 });
-    await setGroupStanding(group, first, second);
+    await setGroupStanding(group, first, second, third || undefined, thirdClassified || false);
     return NextResponse.json({ ok: true });
   }
 

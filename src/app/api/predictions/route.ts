@@ -32,10 +32,10 @@ export async function POST(req: NextRequest) {
   const { type } = body;
 
   if (type === 'group_position') {
-    const { group, first, second } = body;
+    const { group, first, second, third } = body;
     if (!group || !first || !second)
       return NextResponse.json({ error: 'Datos incompletos' }, { status: 400 });
-    await saveGroupPrediction(session.empresaSlug, session.username, group, { first, second });
+    await saveGroupPrediction(session.empresaSlug, session.username, group, { first, second, third: third || undefined });
     return NextResponse.json({ ok: true });
   }
 

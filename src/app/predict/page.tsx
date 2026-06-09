@@ -11,7 +11,8 @@ import { Flag } from '@/components/Flag';
 
 interface ResultEntry { home: number; away: number; played: boolean; locked: boolean; winner?: Side; }
 interface ScorePred   { home: number; away: number; winner?: Side; }
-interface GroupPos    { first: string; second: string; }
+interface GroupPos    { first: string; second: string; third?: string; }
+interface GroupStanding { first: string; second: string; third?: string; thirdClassified?: boolean; }
 interface SessionUser { username: string; displayName: string; role: string; empresaSlug: string; empresaName: string; }
 
 function PtsBadge({ pts, max }: { pts: number; max: number }) {
@@ -20,10 +21,11 @@ function PtsBadge({ pts, max }: { pts: number; max: number }) {
   return <span className="badge-miss text-xs font-bold px-2 py-0.5 rounded-full">0 pts</span>;
 }
 
-function MatchCard({ match, prediction, result, onSave, saving, isKnockout, closed }: {
+function MatchCard({ match, prediction, result, onSave, saving, isKnockout, closed, onValueChange }: {
   match: Match; prediction?: ScorePred; result?: ResultEntry;
   onSave: (id: number, h: number, a: number, w?: Side) => void;
   saving: boolean; isKnockout: boolean; closed: boolean;
+  onValueChange?: (id: number, h: string, a: string, w?: Side) => void;
 }) {
   const [h, setH] = useState(String(prediction?.home ?? ''));
   const [a, setA] = useState(String(prediction?.away ?? ''));
@@ -34,6 +36,9 @@ function MatchCard({ match, prediction, result, onSave, saving, isKnockout, clos
     const hn = parseInt(h), an = parseInt(a);
     if (!isNaN(hn) && !isNaN(an)) { const dw = derivedWinner({ home: hn, away: an }); if (dw) setW(dw); }
   }, [h, a, isKnockout]);
+
+  function handleH(val: string) { setH(val); onValueChange?.(match.id, val, a, w); }
+  function handleA(val: string) { setA(val); onValueChange?.(match.id, h, val, w); }
 
   const isLocked = closed || result?.locked;
   const isPlayed = result?.played;
@@ -69,10 +74,10 @@ function MatchCard({ match, prediction, result, onSave, saving, isKnockout, clos
           <Flag isoCode={match.homeTeam.isoCode} name={match.homeTeam.name} size={28} />
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <input type="number" min={0} max={20} value={h} onChange={e => setH(e.target.value)}
+          <input type="number" min={0} max={20} value={h} onChange={e => handleH(e.target.value)}
             disabled={!!isLocked || saving} className="score-input" />
           <span className="text-slate-500 font-bold">–</span>
-          <input type="number" min={0} max={20} value={a} onChange={e => setA(e.target.value)}
+          <input type="number" min={0} max={20} value={a} onChange={e => handleA(e.target.value)}
             disabled={!!isLocked || saving} className="score-input" />
         </div>
         <div className="flex-1 flex items-center gap-2">
@@ -98,62 +103,96 @@ function MatchCard({ match, prediction, result, onSave, saving, isKnockout, clos
   );
 }
 
-function GroupPosCard({ group, teams, prediction, standing, onSave, closed }: {
-  group: string; teams: Team[]; prediction?: GroupPos; standing?: GroupPos;
-  onSave: (g: string, first: string, second: string) => void; closed: boolean;
+function GroupPosCard({ group, teams, prediction, standing, onSave, closed, thirdsCount }: {
+  group: string; teams: Team[]; prediction?: GroupPos; standing?: GroupStanding;
+  onSave: (g: string, first: string, second: string, third?: string) => void;
+  closed: boolean; thirdsCount: number;
 }) {
-  const [first, setFirst]   = useState(prediction?.first || '');
+  const [first,  setFirst]  = useState(prediction?.first  || '');
   const [second, setSecond] = useState(prediction?.second || '');
-  const [saved, setSaved]   = useState(false);
-  useEffect(() => { setFirst(prediction?.first || ''); setSecond(prediction?.second || ''); }, [prediction]);
+  const [third,  setThird]  = useState(prediction?.third  || '');
+  const [saved,  setSaved]  = useState(false);
+  useEffect(() => {
+    setFirst(prediction?.first || ''); setSecond(prediction?.second || ''); setThird(prediction?.third || '');
+  }, [prediction]);
+
   const pts = standing && prediction ? calcGroupPositionPoints(prediction, standing) : null;
+  const maxPts = 20 + (standing?.third ? 10 : 0);
+  const thirdLocked = closed || (!third && thirdsCount >= 8);
+
   function save() {
     if (!first || !second || first === second || closed) return;
-    onSave(group, first, second);
+    onSave(group, first, second, third || undefined);
     setSaved(true); setTimeout(() => setSaved(false), 1500);
   }
+
   return (
     <div className={`match-card p-4 ${closed ? 'locked' : ''}`}>
       <div className="flex items-center gap-2 mb-3">
         <div className="w-6 h-6 rounded flex items-center justify-center font-black text-xs"
           style={{ background: 'linear-gradient(135deg,#e63946,#c1121f)' }}>{group}</div>
         <span className="text-sm font-bold text-white">Grupo {group}</span>
-        {pts !== null && <span className="ml-auto"><PtsBadge pts={pts} max={20} /></span>}
-        {standing && (
-          <span className="text-xs text-slate-500 flex items-center gap-1 ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          {pts !== null && <PtsBadge pts={pts} max={maxPts} />}
+          {standing && (
+          <span className="text-xs text-slate-500 flex items-center gap-1">
             Real:&nbsp;
-            <Flag isoCode={teams.find(t => t.code === standing.first)?.isoCode ?? ''} name="" size={16} />
+            <Flag isoCode={teams.find(t => t.code === standing.first)?.isoCode  ?? ''} name="" size={16} />
             <Flag isoCode={teams.find(t => t.code === standing.second)?.isoCode ?? ''} name="" size={16} />
+            {standing.third && (
+              <>
+                <span className="text-slate-600">·</span>
+                <Flag isoCode={teams.find(t => t.code === standing.third)?.isoCode ?? ''} name="" size={16} />
+                {standing.thirdClassified && <span className="text-emerald-400 text-xs">✓</span>}
+              </>
+            )}
           </span>
-        )}
+          )}
+        </div>
       </div>
-      <div className="flex gap-3 items-end">
-        <div className="flex-1">
-          <label className="text-xs text-amber-400 font-bold block mb-1">🥇 1° Clasificado</label>
-          <select value={first} onChange={e => setFirst(e.target.value)} disabled={closed}
-            className="w-full border border-white/15 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400 disabled:opacity-50"
-            style={{ backgroundColor: '#0d1b35', colorScheme: 'dark' }}>
-            <option value="">— Elegir —</option>
-            {teams.map(t => <option key={t.code} value={t.code} disabled={t.code === second}>{t.name}</option>)}
-          </select>
+      <div className="grid grid-cols-1 gap-2">
+        <div className="flex gap-2">
+          <div className="flex-1">
+            <label className="text-xs text-amber-400 font-bold block mb-1">🥇 1° Clasificado</label>
+            <select value={first} onChange={e => setFirst(e.target.value)} disabled={closed}
+              className="w-full border border-white/15 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400 disabled:opacity-50"
+              style={{ backgroundColor: '#0d1b35', colorScheme: 'dark' }}>
+              <option value="">— Elegir —</option>
+              {teams.map(t => <option key={t.code} value={t.code} disabled={t.code === second || t.code === third}>{t.name}</option>)}
+            </select>
+          </div>
+          <div className="flex-1">
+            <label className="text-xs text-slate-400 font-bold block mb-1">🥈 2° Clasificado</label>
+            <select value={second} onChange={e => setSecond(e.target.value)} disabled={closed}
+              className="w-full border border-white/15 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400 disabled:opacity-50"
+              style={{ backgroundColor: '#0d1b35', colorScheme: 'dark' }}>
+              <option value="">— Elegir —</option>
+              {teams.map(t => <option key={t.code} value={t.code} disabled={t.code === first || t.code === third}>{t.name}</option>)}
+            </select>
+          </div>
         </div>
-        <div className="flex-1">
-          <label className="text-xs text-slate-400 font-bold block mb-1">🥈 2° Clasificado</label>
-          <select value={second} onChange={e => setSecond(e.target.value)} disabled={closed}
-            className="w-full border border-white/15 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400 disabled:opacity-50"
-            style={{ backgroundColor: '#0d1b35', colorScheme: 'dark' }}>
-            <option value="">— Elegir —</option>
-            {teams.map(t => <option key={t.code} value={t.code} disabled={t.code === first}>{t.name}</option>)}
-          </select>
+        <div className="flex gap-2 items-end">
+          <div className="flex-1">
+            <label className={`text-xs font-bold block mb-1 ${thirdLocked && !third ? 'text-slate-600' : 'text-slate-300'}`}>
+              🥉 3° Mejor Tercero
+              {thirdLocked && !third && <span className="ml-1 text-slate-600 font-normal">(8/8 llenos)</span>}
+            </label>
+            <select value={third} onChange={e => setThird(e.target.value)} disabled={thirdLocked}
+              className="w-full border border-white/15 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-emerald-400 disabled:opacity-40"
+              style={{ backgroundColor: '#0d1b35', colorScheme: 'dark' }}>
+              <option value="">— No seleccionar —</option>
+              {teams.map(t => <option key={t.code} value={t.code} disabled={t.code === first || t.code === second}>{t.name}</option>)}
+            </select>
+          </div>
+          {!closed && (
+            <button onClick={save} disabled={!first || !second || first === second}
+              className={`px-4 py-2 rounded-lg text-xs font-bold transition-all border shrink-0 ${
+                saved ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
+                      : 'bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20'}`}>
+              {saved ? '✓' : 'Guardar'}
+            </button>
+          )}
         </div>
-        {!closed && (
-          <button onClick={save} disabled={!first || !second || first === second}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all border shrink-0 ${
-              saved ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
-                    : 'bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20'}`}>
-            {saved ? '✓' : 'Guardar'}
-          </button>
-        )}
       </div>
     </div>
   );
@@ -186,17 +225,19 @@ function DeadlineBanner({ closed, countdown }: { closed: boolean; countdown: str
 
 function PredictContent() {
   const router = useRouter();
-  const [session,   setSession]   = useState<SessionUser | null>(null);
-  const [phase,     setPhase]     = useState<'grupos' | 'clasificados'>('grupos');
-  const [group,     setGroup]     = useState('A');
-  const [preds,     setPreds]     = useState<Record<string, ScorePred>>({});
-  const [gPreds,    setGPreds]    = useState<Record<string, GroupPos>>({});
-  const [results,   setResults]   = useState<Record<string, ResultEntry>>({});
-  const [standings, setStandings] = useState<Record<string, GroupPos>>({});
-  const [saving,    setSaving]    = useState(false);
-  const [loading,   setLoading]   = useState(true);
-  const [countdown, setCountdown] = useState('');
-  const [isClosed,  setIsClosed]  = useState(false);
+  const [session,      setSession]      = useState<SessionUser | null>(null);
+  const [phase,        setPhase]        = useState<'grupos' | 'clasificados'>('grupos');
+  const [group,        setGroup]        = useState('A');
+  const [preds,        setPreds]        = useState<Record<string, ScorePred>>({});
+  const [gPreds,       setGPreds]       = useState<Record<string, GroupPos>>({});
+  const [results,      setResults]      = useState<Record<string, ResultEntry>>({});
+  const [standings,    setStandings]    = useState<Record<string, GroupStanding>>({});
+  const [saving,       setSaving]       = useState(false);
+  const [loading,      setLoading]      = useState(true);
+  const [countdown,    setCountdown]    = useState('');
+  const [isClosed,     setIsClosed]     = useState(false);
+  const [groupPending, setGroupPending] = useState<Record<number, { h: string; a: string; w?: Side }>>({});
+  const [batchSaved,   setBatchSaved]   = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   function token() { return localStorage.getItem('wc26_token') || ''; }
@@ -245,6 +286,18 @@ function PredictContent() {
       });
   }, [router, fetchData]);
 
+  useEffect(() => {
+    if (loading) return;
+    const init: Record<number, { h: string; a: string; w?: Side }> = {};
+    for (const m of getMatchesByGroup(group)) {
+      const p = preds[String(m.id)];
+      init[m.id] = { h: p ? String(p.home) : '', a: p ? String(p.away) : '', w: p?.winner };
+    }
+    setGroupPending(init);
+    setBatchSaved(false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [group, loading]);
+
   async function saveScore(matchId: number, h: number, a: number, w?: Side) {
     if (isClosed) return;
     setSaving(true);
@@ -256,14 +309,42 @@ function PredictContent() {
     setSaving(false);
   }
 
-  async function saveGroupPos(g: string, first: string, second: string) {
+  async function saveGroupAll() {
+    if (isClosed) return;
+    const matches = getMatchesByGroup(group).filter(m => {
+      const v = groupPending[m.id];
+      return v && v.h !== '' && v.a !== '' && !isNaN(parseInt(v.h)) && !isNaN(parseInt(v.a));
+    });
+    if (matches.length === 0) return;
+    setSaving(true);
+    await Promise.all(matches.map(m => {
+      const v = groupPending[m.id];
+      return fetch('/api/predictions', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-session-token': token() },
+        body: JSON.stringify({ matchId: m.id, home: parseInt(v.h), away: parseInt(v.a) }),
+      });
+    }));
+    setPreds(prev => {
+      const updated = { ...prev };
+      matches.forEach(m => {
+        const v = groupPending[m.id];
+        updated[String(m.id)] = { home: parseInt(v.h), away: parseInt(v.a), winner: v.w };
+      });
+      return updated;
+    });
+    setSaving(false);
+    setBatchSaved(true);
+    setTimeout(() => setBatchSaved(false), 2000);
+  }
+
+  async function saveGroupPos(g: string, first: string, second: string, third?: string) {
     if (isClosed) return;
     setSaving(true);
     await fetch('/api/predictions', {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'x-session-token': token() },
-      body: JSON.stringify({ type: 'group_position', group: g, first, second }),
+      body: JSON.stringify({ type: 'group_position', group: g, first, second, third: third || null }),
     });
-    setGPreds(prev => ({ ...prev, [g]: { first, second } }));
+    setGPreds(prev => ({ ...prev, [g]: { first, second, third } }));
     setSaving(false);
   }
 
@@ -272,6 +353,8 @@ function PredictContent() {
     localStorage.removeItem('wc26_token'); localStorage.removeItem('wc26_user');
     router.push('/');
   }
+
+  const thirdsCount = GROUPS.filter(g => !!gPreds[g]?.third).length;
 
   const { matchPts, posPts } = (() => {
     let mp = 0, cp = 0, pp = 0;
@@ -312,6 +395,7 @@ function PredictContent() {
           </div>
           <div className="flex gap-2">
             <Link href="/leaderboard" className="btn-outline text-xs">🏅 Ranking</Link>
+            <Link href="/predict/export" className="btn-outline text-xs">📄 PDF</Link>
             <Link href="/change-password" className="btn-outline text-xs">🔑</Link>
             <button onClick={logout} className="btn-outline text-xs text-red-400">Salir</button>
           </div>
@@ -352,15 +436,25 @@ function PredictContent() {
                     <h2 className="font-bold text-white">Grupo {group}</h2>
                     <p className="text-xs text-slate-500">{getGroupTeams(group).map(t => t.name).join('  ·  ')}</p>
                   </div>
-                  <div className="ml-auto text-right">
+                  <div className="ml-auto flex items-center gap-2">
                     <div className="text-xs text-amber-500 font-bold">4 exacto · 2 resultado</div>
+                    {!isClosed && (
+                      <button onClick={saveGroupAll} disabled={saving}
+                        className={`text-xs px-3 py-1.5 rounded-lg font-bold border transition-all ${
+                          batchSaved
+                            ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
+                            : 'bg-white/5 border-white/15 text-slate-300 hover:bg-amber-500/10 hover:border-amber-500/30 hover:text-amber-400'}`}>
+                        {batchSaved ? '✓ Guardados' : 'Guardar todos'}
+                      </button>
+                    )}
                   </div>
                 </div>
                 <div className="flex flex-col gap-3">
                   {getMatchesByGroup(group).map(match => (
                     <MatchCard key={match.id} match={match}
                       prediction={preds[String(match.id)]} result={results[String(match.id)]}
-                      onSave={saveScore} saving={saving} isKnockout={false} closed={isClosed} />
+                      onSave={saveScore} saving={saving} isKnockout={false} closed={isClosed}
+                      onValueChange={(id, h, a, w) => setGroupPending(prev => ({ ...prev, [id]: { h, a, w } }))} />
                   ))}
                 </div>
               </>
@@ -371,17 +465,34 @@ function PredictContent() {
         {phase === 'clasificados' && (
           <div className="fade-in">
             <div className="glass rounded-xl p-4 mb-4 text-sm">
-              <p className="text-slate-400">
-                Pronostica <strong className="text-amber-400">1° y 2°</strong> de cada grupo.&nbsp;
-                <span className="text-emerald-400 font-bold">10 pts</span> exacto ·&nbsp;
-                <span className="text-blue-400 font-bold">5 pts</span> posición incorrecta
-              </p>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 items-center">
+                <p className="text-slate-400">
+                  Pronostica <strong className="text-amber-400">1° y 2°</strong> de cada grupo.&nbsp;
+                  <span className="text-emerald-400 font-bold">10 pts</span> exacto ·&nbsp;
+                  <span className="text-blue-400 font-bold">5 pts</span> posición incorrecta
+                </p>
+                <p className="text-slate-400">
+                  <strong className="text-slate-300">🥉 3° Mejor Tercero</strong>: elige hasta{' '}
+                  <strong className="text-emerald-400">8 grupos</strong> cuyos terceros clasifiquen.&nbsp;
+                  <span className="text-emerald-400 font-bold">10 pts</span> clasifica ·&nbsp;
+                  <span className="text-blue-400 font-bold">5 pts</span> 3° pero no clasifica
+                </p>
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <div className="flex gap-1">
+                  {Array.from({ length: 8 }).map((_, i) => (
+                    <div key={i} className={`w-3 h-3 rounded-full ${i < thirdsCount ? 'bg-emerald-500' : 'bg-white/10'}`} />
+                  ))}
+                </div>
+                <span className="text-xs text-slate-400">{thirdsCount}/8 mejores terceros seleccionados</span>
+              </div>
             </div>
             {loading ? <div className="text-center py-16 text-slate-500">Cargando...</div> : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {GROUPS.map(g => (
                   <GroupPosCard key={g} group={g} teams={getGroupTeams(g)}
-                    prediction={gPreds[g]} standing={standings[g]} onSave={saveGroupPos} closed={isClosed} />
+                    prediction={gPreds[g]} standing={standings[g]}
+                    onSave={saveGroupPos} closed={isClosed} thirdsCount={thirdsCount} />
                 ))}
               </div>
             )}
