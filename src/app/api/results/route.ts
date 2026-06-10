@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getResults, setMatchResult, setMatchLocked, getGroupStandings, setGroupStanding,
-         getSessionFromRequest } from '@/lib/dataStore';
+         setThirdClassified, getSessionFromRequest } from '@/lib/dataStore';
 
 export async function GET() {
   return NextResponse.json({ results: await getResults(), standings: await getGroupStandings() });
@@ -18,6 +18,13 @@ export async function POST(req: NextRequest) {
     if (!group || !first || !second)
       return NextResponse.json({ error: 'Datos incompletos' }, { status: 400 });
     await setGroupStanding(group, first, second, third || undefined, thirdClassified || false);
+    return NextResponse.json({ ok: true });
+  }
+
+  if (body.type === 'set_third_classified') {
+    const { group, thirdClassified } = body;
+    if (!group) return NextResponse.json({ error: 'grupo requerido' }, { status: 400 });
+    await setThirdClassified(group, Boolean(thirdClassified));
     return NextResponse.json({ ok: true });
   }
 

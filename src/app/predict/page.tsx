@@ -6,7 +6,7 @@ import {
   GROUPS, ALL_MATCHES, getMatchesByGroup, getGroupTeams, type Match, type Team,
 } from '@/lib/matchData';
 import { calcMatchPoints, calcClassifiedPoints, calcGroupPositionPoints, ROUND_RULES, derivedWinner, type Side } from '@/lib/scoring';
-import { PREDICTIONS_DEADLINE_ISO } from '@/lib/config';
+import { PREDICTIONS_DEADLINE_ISO, GROUP_POS_DEADLINE_ISO } from '@/lib/config';
 import { Flag } from '@/components/Flag';
 
 interface ResultEntry { home: number; away: number; played: boolean; locked: boolean; winner?: Side; }
@@ -217,7 +217,7 @@ function DeadlineBanner({ closed, countdown }: { closed: boolean; countdown: str
       <span className="text-xl">⏳</span>
       <div>
         <div className="font-bold text-amber-400">Pronósticos abiertos</div>
-        <div className="text-xs text-slate-400">Cierre: <strong className="text-white">11 de junio 2026 · 12:00 a.m. (hora Colombia)</strong>{countdown ? ` · Faltan ${countdown}` : ''}</div>
+        <div className="text-xs text-slate-400">Cierre: <strong className="text-white">11 de junio 2026 · 2:00 p.m. (hora Colombia)</strong>{countdown ? ` · Faltan ${countdown}` : ''}</div>
       </div>
     </div>
   );
@@ -234,8 +234,10 @@ function PredictContent() {
   const [standings,    setStandings]    = useState<Record<string, GroupStanding>>({});
   const [saving,       setSaving]       = useState(false);
   const [loading,      setLoading]      = useState(true);
-  const [countdown,    setCountdown]    = useState('');
-  const [isClosed,     setIsClosed]     = useState(false);
+  const [countdown,         setCountdown]         = useState('');
+  const [isClosed,          setIsClosed]          = useState(false);
+  const [isGroupPosClosed,  setIsGroupPosClosed]  = useState(false);
+  const [groupPosCountdown, setGroupPosCountdown] = useState('');
   const [groupPending, setGroupPending] = useState<Record<number, { h: string; a: string; w?: Side }>>({});
   const [batchSaved,   setBatchSaved]   = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -253,21 +255,23 @@ function PredictContent() {
   }, []);
 
   useEffect(() => {
-    const deadline = new Date(PREDICTIONS_DEADLINE_ISO);
-    function tick() {
-      const now = new Date();
-      const diff = deadline.getTime() - now.getTime();
-      if (diff <= 0) {
-        setIsClosed(true);
-        setCountdown('');
-        if (intervalRef.current) clearInterval(intervalRef.current);
-        return;
-      }
-      setIsClosed(false);
+    const scoreDeadline  = new Date(PREDICTIONS_DEADLINE_ISO);
+    const groupDeadline  = new Date(GROUP_POS_DEADLINE_ISO);
+    function fmt(diff: number) {
       const days  = Math.floor(diff / 86400000);
       const hours = Math.floor((diff % 86400000) / 3600000);
       const mins  = Math.floor((diff % 3600000) / 60000);
-      setCountdown(days > 0 ? `${days}d ${hours}h ${mins}m` : hours > 0 ? `${hours}h ${mins}m` : `${mins} min`);
+      return days > 0 ? `${days}d ${hours}h ${mins}m` : hours > 0 ? `${hours}h ${mins}m` : `${mins} min`;
+    }
+    function tick() {
+      const now = new Date();
+      const scoreDiff = scoreDeadline.getTime() - now.getTime();
+      const groupDiff = groupDeadline.getTime() - now.getTime();
+      setIsClosed(scoreDiff <= 0);
+      setCountdown(scoreDiff > 0 ? fmt(scoreDiff) : '');
+      setIsGroupPosClosed(groupDiff <= 0);
+      setGroupPosCountdown(groupDiff > 0 ? fmt(groupDiff) : '');
+      if (scoreDiff <= 0 && groupDiff <= 0 && intervalRef.current) clearInterval(intervalRef.current);
     }
     tick();
     intervalRef.current = setInterval(tick, 60000);
@@ -338,7 +342,7 @@ function PredictContent() {
   }
 
   async function saveGroupPos(g: string, first: string, second: string, third?: string) {
-    if (isClosed) return;
+    if (isGroupPosClosed) return;
     setSaving(true);
     await fetch('/api/predictions', {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'x-session-token': token() },
@@ -464,6 +468,29 @@ function PredictContent() {
 
         {phase === 'clasificados' && (
           <div className="fade-in">
+            {/* Group pos deadline banner */}
+            {isGroupPosClosed ? (
+              <div className="rounded-xl px-4 py-3 mb-4 flex items-center gap-3 text-sm"
+                style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)' }}>
+                <span className="text-xl">🔒</span>
+                <div>
+                  <div className="font-bold text-red-400">Clasificados cerrados</div>
+                  <div className="text-xs text-slate-400">El primer partido comenzó el 11 de junio a las 2:00 p.m. Colombia.</div>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-xl px-4 py-3 mb-4 flex items-center gap-3 text-sm"
+                style={{ background: 'rgba(16,185,129,0.07)', border: '1px solid rgba(16,185,129,0.2)' }}>
+                <span className="text-xl">⏳</span>
+                <div>
+                  <div className="font-bold text-emerald-400">Clasificados abiertos</div>
+                  <div className="text-xs text-slate-400">
+                    Cierre: <strong className="text-white">11 de junio 2026 · 2:00 p.m. (hora Colombia)</strong>
+                    {groupPosCountdown ? ` · Faltan ${groupPosCountdown}` : ''}
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="glass rounded-xl p-4 mb-4 text-sm">
               <div className="flex flex-wrap gap-x-4 gap-y-1 items-center">
                 <p className="text-slate-400">
@@ -474,8 +501,7 @@ function PredictContent() {
                 <p className="text-slate-400">
                   <strong className="text-slate-300">🥉 3° Mejor Tercero</strong>: elige hasta{' '}
                   <strong className="text-emerald-400">8 grupos</strong> cuyos terceros clasifiquen.&nbsp;
-                  <span className="text-emerald-400 font-bold">10 pts</span> clasifica ·&nbsp;
-                  <span className="text-blue-400 font-bold">5 pts</span> 3° pero no clasifica
+                  <span className="text-emerald-400 font-bold">10 pts</span> si clasifica · <span className="text-slate-500">0 pts</span> si no clasifica
                 </p>
               </div>
               <div className="mt-2 flex items-center gap-2">
@@ -492,7 +518,7 @@ function PredictContent() {
                 {GROUPS.map(g => (
                   <GroupPosCard key={g} group={g} teams={getGroupTeams(g)}
                     prediction={gPreds[g]} standing={standings[g]}
-                    onSave={saveGroupPos} closed={isClosed} thirdsCount={thirdsCount} />
+                    onSave={saveGroupPos} closed={isGroupPosClosed} thirdsCount={thirdsCount} />
                 ))}
               </div>
             )}

@@ -2,12 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSessionFromRequest, getScorePredictions, saveScorePrediction,
          getGroupPredictions, saveGroupPrediction, getResults } from '@/lib/dataStore';
 import { GROUP_MATCHES } from '@/lib/matchData';
-import { predictionsAreClosed } from '@/lib/config';
+import { predictionsAreClosed, groupPosAreClosed } from '@/lib/config';
 
 const GROUP_MATCH_IDS = new Set(GROUP_MATCHES.map(m => String(m.id)));
 
 const CLOSED_RESPONSE = NextResponse.json(
   { error: 'El plazo de pronósticos cerró el 11 de junio. Ya no se pueden hacer cambios.' },
+  { status: 403 }
+);
+
+const GROUP_POS_CLOSED_RESPONSE = NextResponse.json(
+  { error: 'El plazo para clasificados cerró al inicio del primer partido.' },
   { status: 403 }
 );
 
@@ -26,18 +31,19 @@ export async function POST(req: NextRequest) {
   if (!session || session.role !== 'participant')
     return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
 
-  if (predictionsAreClosed()) return CLOSED_RESPONSE;
-
   const body = await req.json();
   const { type } = body;
 
   if (type === 'group_position') {
+    if (groupPosAreClosed()) return GROUP_POS_CLOSED_RESPONSE;
     const { group, first, second, third } = body;
     if (!group || !first || !second)
       return NextResponse.json({ error: 'Datos incompletos' }, { status: 400 });
     await saveGroupPrediction(session.empresaSlug, session.username, group, { first, second, third: third || undefined });
     return NextResponse.json({ ok: true });
   }
+
+  if (predictionsAreClosed()) return CLOSED_RESPONSE;
 
   const { matchId, home, away, winner } = body;
   if (matchId === undefined)

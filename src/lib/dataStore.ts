@@ -316,3 +316,7 @@ export async function setGroupStanding(
       third = EXCLUDED.third, third_classified = EXCLUDED.third_classified
   `;
 }
+
+export async function setThirdClassified(group: string, thirdClassified: boolean): Promise<void> {
+  await sql`UPDATE standings SET third_classified = ${thirdClassified} WHERE group_name = ${group}`;
+}

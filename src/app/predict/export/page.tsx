@@ -111,10 +111,13 @@ export default function ExportPage() {
       <style>{`
         @media print {
           .no-print { display: none !important; }
-          body { background: white !important; color: black !important; }
+          body { background: white !important; color: #111 !important; }
+          body::before { display: none !important; }
+          th { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          .tag-third { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
           @page { margin: 1.5cm; size: A4; }
         }
-        body { background: white; color: #111; font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; }
+        body { background: white !important; color: #111 !important; font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; }
         table { border-collapse: collapse; width: 100%; }
         th, td { border: 1px solid #ccc; padding: 4px 6px; text-align: left; }
         th { background: #f0f0f0; font-weight: 700; }

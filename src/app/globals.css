@@ -161,3 +161,11 @@ body::before {
 ::-webkit-scrollbar-track { background: #0d1b35; }
 ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+@media print {
+  body {
+    background: white !important;
+    color: #111 !important;
+  }
+  body::before { display: none !important; }
+}

@@ -96,70 +96,128 @@ function StandingsRow({ group, teams, standing, token, onUpdate }: {
   group: string; teams: { code: string; name: string; isoCode: string }[];
   standing?: GroupPos; token: string; onUpdate: () => void;
 }) {
-  const [first,            setFirst]            = useState(standing?.first || '');
-  const [second,           setSecond]           = useState(standing?.second || '');
-  const [third,            setThird]            = useState(standing?.third || '');
-  const [thirdClassified,  setThirdClassified]  = useState(standing?.thirdClassified ?? false);
-  const [saving,           setSaving]           = useState(false);
-  const [msg,              setMsg]              = useState('');
+  const [first,  setFirst]  = useState(standing?.first  || '');
+  const [second, setSecond] = useState(standing?.second || '');
+  const [third,  setThird]  = useState(standing?.third  || '');
+  const [saving, setSaving] = useState(false);
+  const [msg,    setMsg]    = useState('');
   useEffect(() => {
     setFirst(standing?.first || ''); setSecond(standing?.second || '');
-    setThird(standing?.third || ''); setThirdClassified(standing?.thirdClassified ?? false);
+    setThird(standing?.third || '');
   }, [standing]);
 
   async function save() {
     if (!first || !second || first === second) return;
     setSaving(true);
+    // Preserva thirdClassified existente salvo que se cambie el equipo 3°
+    const tc = third !== (standing?.third ?? '') ? false : (standing?.thirdClassified ?? false);
     const res = await fetch('/api/results', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-session-token': token },
-      body: JSON.stringify({ type: 'group_standing', group, first, second, third: third || null, thirdClassified }),
+      body: JSON.stringify({ type: 'group_standing', group, first, second, third: third || null, thirdClassified: tc }),
     });
     setSaving(false);
     if (res.ok) { setMsg('✓'); onUpdate(); setTimeout(() => setMsg(''), 1500); }
   }
 
   return (
-    <div className="flex flex-col gap-2 py-2.5 px-3 border-b border-white/5 hover:bg-white/3">
-      <div className="flex items-center gap-3">
-        <div className="w-6 h-6 rounded flex items-center justify-center font-black text-xs shrink-0"
-          style={{ background: 'linear-gradient(135deg,#e63946,#c1121f)' }}>{group}</div>
-        <div className="flex-1 flex gap-2">
-          <select value={first} onChange={e => setFirst(e.target.value)}
-            className="flex-1 border border-white/15 rounded px-2 py-1.5 text-white text-xs focus:outline-none focus:border-amber-400"
-            style={{ backgroundColor: '#0d1b35', colorScheme: 'dark' }}>
-            <option value="">1° —</option>
-            {teams.map(t => <option key={t.code} value={t.code} disabled={t.code === second || t.code === third}>{t.name}</option>)}
-          </select>
-          <select value={second} onChange={e => setSecond(e.target.value)}
-            className="flex-1 border border-white/15 rounded px-2 py-1.5 text-white text-xs focus:outline-none focus:border-amber-400"
-            style={{ backgroundColor: '#0d1b35', colorScheme: 'dark' }}>
-            <option value="">2° —</option>
-            {teams.map(t => <option key={t.code} value={t.code} disabled={t.code === first || t.code === third}>{t.name}</option>)}
-          </select>
-          <select value={third} onChange={e => { setThird(e.target.value); if (!e.target.value) setThirdClassified(false); }}
-            className="flex-1 border border-white/15 rounded px-2 py-1.5 text-white text-xs focus:outline-none focus:border-emerald-400"
-            style={{ backgroundColor: '#0d1b35', colorScheme: 'dark' }}>
-            <option value="">3° —</option>
-            {teams.map(t => <option key={t.code} value={t.code} disabled={t.code === first || t.code === second}>{t.name}</option>)}
-          </select>
-        </div>
-        <button onClick={save} disabled={saving || !first || !second || first === second}
-          className={`text-xs px-2 py-1 rounded font-bold border transition-all shrink-0 ${
-            msg === '✓' ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
-                        : 'bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20'}`}>
-          {saving ? '…' : msg || 'OK'}
-        </button>
+    <div className="flex items-center gap-3 py-2.5 px-3 border-b border-white/5 hover:bg-white/3">
+      <div className="w-6 h-6 rounded flex items-center justify-center font-black text-xs shrink-0"
+        style={{ background: 'linear-gradient(135deg,#e63946,#c1121f)' }}>{group}</div>
+      <div className="flex-1 flex gap-2">
+        <select value={first} onChange={e => setFirst(e.target.value)}
+          className="flex-1 border border-white/15 rounded px-2 py-1.5 text-white text-xs focus:outline-none focus:border-amber-400"
+          style={{ backgroundColor: '#0d1b35', colorScheme: 'dark' }}>
+          <option value="">1° —</option>
+          {teams.map(t => <option key={t.code} value={t.code} disabled={t.code === second || t.code === third}>{t.name}</option>)}
+        </select>
+        <select value={second} onChange={e => setSecond(e.target.value)}
+          className="flex-1 border border-white/15 rounded px-2 py-1.5 text-white text-xs focus:outline-none focus:border-amber-400"
+          style={{ backgroundColor: '#0d1b35', colorScheme: 'dark' }}>
+          <option value="">2° —</option>
+          {teams.map(t => <option key={t.code} value={t.code} disabled={t.code === first || t.code === third}>{t.name}</option>)}
+        </select>
+        <select value={third} onChange={e => setThird(e.target.value)}
+          className="flex-1 border border-white/15 rounded px-2 py-1.5 text-white text-xs focus:outline-none focus:border-emerald-400"
+          style={{ backgroundColor: '#0d1b35', colorScheme: 'dark' }}>
+          <option value="">3° —</option>
+          {teams.map(t => <option key={t.code} value={t.code} disabled={t.code === first || t.code === second}>{t.name}</option>)}
+        </select>
       </div>
-      {third && (
-        <div className="flex items-center gap-2 pl-9">
-          <label className="flex items-center gap-1.5 cursor-pointer select-none">
-            <input type="checkbox" checked={thirdClassified} onChange={e => setThirdClassified(e.target.checked)}
-              className="w-3.5 h-3.5 accent-emerald-500" />
-            <span className="text-xs text-slate-400">Clasifica como mejor tercero</span>
-          </label>
-        </div>
-      )}
+      <button onClick={save} disabled={saving || !first || !second || first === second}
+        className={`text-xs px-2 py-1 rounded font-bold border transition-all shrink-0 ${
+          msg === '✓' ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
+                      : 'bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20'}`}>
+        {saving ? '…' : msg || 'OK'}
+      </button>
+    </div>
+  );
+}
+
+function BestThirdsPanel({ standings, token, onUpdate }: {
+  standings: Record<string, GroupPos>;
+  token: string;
+  onUpdate: () => void;
+}) {
+  const [saving, setSaving] = useState<string | null>(null);
+  const classifiedCount = GROUPS.filter(g => standings[g]?.thirdClassified).length;
+
+  async function toggle(group: string) {
+    if (!standings[group]?.third || saving) return;
+    setSaving(group);
+    await fetch('/api/results', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-session-token': token },
+      body: JSON.stringify({ type: 'set_third_classified', group, thirdClassified: !standings[group].thirdClassified }),
+    });
+    setSaving(null);
+    onUpdate();
+  }
+
+  return (
+    <div className="glass rounded-2xl p-4 mt-4">
+      <div className="flex items-center justify-between mb-1">
+        <h3 className="font-bold text-white text-sm">🥉 Mejores Terceros clasificados</h3>
+        <span className={`font-black text-sm ${classifiedCount === 8 ? 'text-emerald-400' : 'text-amber-400'}`}>
+          {classifiedCount} / 8
+        </span>
+      </div>
+      <p className="text-xs text-slate-500 mb-3">
+        Toca un grupo para marcar o desmarcar su tercero como clasificado (otorga 10 pts a quienes lo acertaron). El equipo debe estar registrado como 3° arriba.
+      </p>
+      <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
+        {GROUPS.map(g => {
+          const s = standings[g];
+          const teams = getGroupTeams(g);
+          const team = s?.third ? teams.find(t => t.code === s.third) : undefined;
+          const classified = !!s?.thirdClassified;
+          return (
+            <button key={g} onClick={() => toggle(g)} disabled={!team || saving === g}
+              className={`rounded-xl p-2.5 border text-center transition-all ${
+                classified
+                  ? 'bg-emerald-500/15 border-emerald-500/50'
+                  : team
+                  ? 'bg-white/5 border-white/10 hover:border-white/30'
+                  : 'bg-white/3 border-white/5 opacity-30 cursor-not-allowed'
+              }`}>
+              <div className="text-xs font-black text-slate-400 mb-1">{g}</div>
+              {team ? (
+                <>
+                  <div className="flex justify-center mb-1">
+                    <Flag isoCode={team.isoCode} name={team.name} size={20} />
+                  </div>
+                  <div className={`leading-tight text-xs font-semibold ${classified ? 'text-emerald-300' : 'text-slate-300'}`}>
+                    {team.name.length > 11 ? team.name.slice(0, 11) + '…' : team.name}
+                  </div>
+                  {classified && <div className="text-emerald-400 mt-0.5" style={{ fontSize: 10 }}>✓ clasifica</div>}
+                </>
+              ) : (
+                <div className="text-slate-600 text-xs mt-2">Sin 3°</div>
+              )}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -419,7 +477,7 @@ export default function SuperAdminPage() {
               <strong className="text-amber-400">1°, 2° y 3°</strong> de cada grupo. Aplica a todas las empresas.
               <span className="text-emerald-400 font-bold ml-2">10 pts</span> exacto ·
               <span className="text-blue-400 font-bold ml-1">5 pts</span> posición incorrecta.
-              Para el 3°: marca <strong className="text-emerald-400">"Clasifica"</strong> si ese equipo avanzó como mejor tercero (10 pts); si no, solo 5 pts por acertar el 3° del grupo.
+              Para el 3°: marca <strong className="text-emerald-400">"Clasifica"</strong> si ese equipo avanzó como mejor tercero (<strong className="text-emerald-400">10 pts</strong>); si no clasifica, <strong className="text-slate-400">0 pts</strong>.
             </div>
             <div className="glass rounded-2xl overflow-hidden">
               {GROUPS.map(g => (
@@ -427,6 +485,7 @@ export default function SuperAdminPage() {
                   standing={standings[g]} token={sessionToken} onUpdate={fetchResults} />
               ))}
             </div>
+            <BestThirdsPanel standings={standings} token={sessionToken} onUpdate={fetchResults} />
           </div>
         )}
       </div>
