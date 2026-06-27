@@ -68,6 +68,10 @@ const TEAMS: Record<string, Team> = {
 const t = (code: string): Team => TEAMS[code];
 const mkTBD = (label: string): Team => ({ code: label, name: label, isoCode: '' });
 
+export function getTeamByCode(code: string): Team | undefined {
+  return TEAMS[code];
+}
+
 export const GROUP_MATCHES: Match[] = [
   // Group A
   { id: 1,  group: 'A', round: 'group', homeTeam: t('A1'), awayTeam: t('A2'), date: '2026-06-11', venue: 'Mexico City' },
@@ -215,6 +219,40 @@ export const ALL_MATCHES: Match[] = [
 ];
 
 export const GROUPS = ['A','B','C','D','E','F','G','H','I','J','K','L'];
+
+// ─── Bracket feeders ────────────────────────────────────────────────────────
+// De qué partido sale cada equipo de una llave eliminatoria a partir de octavos.
+// 'winner' = el que avanza de ese partido; 'loser' = el que pierde (para el 3er puesto).
+// Los 16avos (73–88) NO tienen feeders: sus equipos los asigna el admin (tabla r32_teams).
+export type Feeder = { type: 'winner' | 'loser'; match: number };
+export const KO_FEEDERS: Record<number, { home: Feeder; away: Feeder }> = {
+  // Octavos (r16)
+  89: { home: { type: 'winner', match: 74 }, away: { type: 'winner', match: 77 } },
+  90: { home: { type: 'winner', match: 73 }, away: { type: 'winner', match: 75 } },
+  91: { home: { type: 'winner', match: 76 }, away: { type: 'winner', match: 78 } },
+  92: { home: { type: 'winner', match: 79 }, away: { type: 'winner', match: 80 } },
+  93: { home: { type: 'winner', match: 83 }, away: { type: 'winner', match: 84 } },
+  94: { home: { type: 'winner', match: 81 }, away: { type: 'winner', match: 82 } },
+  95: { home: { type: 'winner', match: 86 }, away: { type: 'winner', match: 88 } },
+  96: { home: { type: 'winner', match: 85 }, away: { type: 'winner', match: 87 } },
+  // Cuartos (qf)
+  97:  { home: { type: 'winner', match: 89 }, away: { type: 'winner', match: 90 } },
+  98:  { home: { type: 'winner', match: 93 }, away: { type: 'winner', match: 94 } },
+  99:  { home: { type: 'winner', match: 91 }, away: { type: 'winner', match: 92 } },
+  100: { home: { type: 'winner', match: 95 }, away: { type: 'winner', match: 96 } },
+  // Semifinales (sf)
+  101: { home: { type: 'winner', match: 97 }, away: { type: 'winner', match: 98 } },
+  102: { home: { type: 'winner', match: 99 }, away: { type: 'winner', match: 100 } },
+  // 3er puesto (perdedores de semis)
+  103: { home: { type: 'loser', match: 101 }, away: { type: 'loser', match: 102 } },
+  // Final (ganadores de semis)
+  104: { home: { type: 'winner', match: 101 }, away: { type: 'winner', match: 102 } },
+};
+
+// IDs de partidos de mata-mata (16avos → final), en orden.
+export const KNOCKOUT_MATCH_IDS: number[] = [
+  ...R32_MATCHES, ...R16_MATCHES, ...QF_MATCHES, ...SF_MATCHES, THIRD_PLACE_MATCH, FINAL_MATCH,
+].map(m => m.id);
 
 export function getMatchesByGroup(group: string): Match[] {
   return GROUP_MATCHES.filter(m => m.group === group).sort((a, b) => a.id - b.id);

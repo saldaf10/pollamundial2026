@@ -2,9 +2,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { GROUPS, KNOCKOUT_ROUNDS, getMatchesByGroup, getGroupTeams, type Match } from '@/lib/matchData';
+import { GROUPS, R32_MATCHES, KO_FEEDERS, getMatchById, getMatchesByGroup, getGroupTeams, getTeamByCode, type Match } from '@/lib/matchData';
 import { Flag } from '@/components/Flag';
-import { ROUND_RULES, type Side } from '@/lib/scoring';
+import { resolveBracket, type Side } from '@/lib/scoring';
+import { BracketLayout, BRACKET } from '@/components/Bracket';
 
 interface ResultEntry { home: number; away: number; played: boolean; locked: boolean; winner?: Side; }
 interface GroupPos    { first: string; second: string; third?: string; thirdClassified?: boolean; }
@@ -88,6 +89,182 @@ function AdminMatchRow({ match, result, token, onUpdate, isKnockout }: {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// Tarjeta del bracket real (superadmin): equipos resueltos + marcador + penales + bloqueo.
+function AdminBracketCard({ match, homeCode, awayCode, result, token, onUpdate }: {
+  match: Match; homeCode?: string; awayCode?: string; result?: ResultEntry; token: string; onUpdate: () => void;
+}) {
+  const home = homeCode ? getTeamByCode(homeCode) : undefined;
+  const away = awayCode ? getTeamByCode(awayCode) : undefined;
+  const ready = !!home && !!away;
+  const [h, setH] = useState(String(result?.home ?? ''));
+  const [a, setA] = useState(String(result?.away ?? ''));
+  const [w, setW] = useState<Side | undefined>(result?.winner);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+  useEffect(() => { setH(String(result?.home ?? '')); setA(String(result?.away ?? '')); setW(result?.winner); }, [result]);
+
+  const isDraw = h !== '' && a !== '' && parseInt(h) === parseInt(a);
+  const isPlayed = result?.played;
+
+  async function save() {
+    const hn = parseInt(h), an = parseInt(a);
+    if (isNaN(hn) || isNaN(an)) return;
+    if (hn === an && !w) { setMsg('penales'); setTimeout(() => setMsg(''), 1500); return; }
+    setSaving(true);
+    const res = await fetch('/api/results', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-session-token': token },
+      body: JSON.stringify({ matchId: match.id, home: hn, away: an, winner: hn === an ? w : (hn > an ? 'home' : 'away') }),
+    });
+    setSaving(false);
+    if (res.ok) { setMsg('✓'); onUpdate(); setTimeout(() => setMsg(''), 1500); } else setMsg('Error');
+  }
+
+  async function toggleLock() {
+    setSaving(true);
+    await fetch('/api/results', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-session-token': token },
+      body: JSON.stringify({ matchId: match.id, locked: !result?.locked }),
+    });
+    setSaving(false); onUpdate();
+  }
+
+  const TeamRow = ({ team, side }: { team?: { name: string; isoCode: string }; side: Side }) => {
+    const value = side === 'home' ? h : a;
+    return (
+      <div className="flex items-center gap-2">
+        <Flag isoCode={team?.isoCode ?? ''} name={team?.name ?? ''} size={18} />
+        <span className={`text-xs font-semibold truncate flex-1 ${team ? 'text-white' : 'text-slate-600 italic'}`}>{team?.name ?? 'Por definir'}</span>
+        <input type="number" min={0} max={20} value={value} disabled={!ready || saving}
+          onChange={e => (side === 'home' ? setH : setA)(e.target.value)}
+          className="w-9 h-7 bg-white/10 border border-white/15 rounded text-white text-center text-sm font-bold focus:outline-none focus:border-amber-400 disabled:opacity-40" />
+      </div>
+    );
+  };
+
+  return (
+    <div className={`match-card p-3 ${result?.locked ? 'locked' : ''} ${!ready ? 'opacity-60' : ''} ${isPlayed ? 'bg-white/3' : ''}`}>
+      <div className="flex items-center gap-1.5 mb-2">
+        <span className="text-xs text-slate-600 font-mono">#{match.id}</span>
+        <button onClick={toggleLock} disabled={saving}
+          className={`ml-auto text-sm transition-opacity ${result?.locked ? 'opacity-100' : 'opacity-30 hover:opacity-70'}`}>
+          {result?.locked ? '🔒' : '🔓'}
+        </button>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <TeamRow team={home} side="home" />
+        <TeamRow team={away} side="away" />
+      </div>
+      {isDraw && ready && (
+        <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+          <span className="text-xs text-amber-400">Pasa:</span>
+          {(['home', 'away'] as Side[]).map(side => (
+            <button key={side} onClick={() => setW(side)}
+              className={`px-2 py-0.5 rounded text-xs font-bold border transition-all ${
+                w === side ? 'bg-amber-500/20 border-amber-400/60 text-amber-300' : 'bg-white/5 border-white/10 text-slate-400'}`}>
+              {(side === 'home' ? home : away)?.name}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="mt-2 flex justify-end">
+        <button onClick={save} disabled={saving || !ready || h === '' || a === ''}
+          className={`text-xs px-3 py-1 rounded font-bold border transition-all ${
+            msg === '✓' ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
+            : msg === 'Error' || msg === 'penales' ? 'bg-red-500/20 border-red-500/40 text-red-400'
+            : 'bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20 disabled:opacity-40'}`}>
+          {saving ? '…' : msg === 'penales' ? '¿penales?' : msg || 'OK'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Sugiere el equipo para una casilla "1°X" / "2°X" a partir de las clasificaciones.
+function suggestFromLabel(label: string, standings: Record<string, GroupPos>): string {
+  const m = label.match(/^([12])°([A-L])$/);
+  if (!m) return '';
+  const s = standings[m[2]];
+  if (!s) return '';
+  return m[1] === '1' ? (s.first || '') : (s.second || '');
+}
+
+function R32Row({ match, assigned, allTeams, standings, token, onUpdate }: {
+  match: Match; assigned?: { home: string; away: string };
+  allTeams: { code: string; name: string; isoCode: string }[];
+  standings: Record<string, GroupPos>; token: string; onUpdate: () => void;
+}) {
+  const sugHome = suggestFromLabel(match.homeTeam.name, standings);
+  const sugAway = suggestFromLabel(match.awayTeam.name, standings);
+  const [home, setHome] = useState(assigned?.home || sugHome);
+  const [away, setAway] = useState(assigned?.away || sugAway);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+  useEffect(() => {
+    setHome(assigned?.home || suggestFromLabel(match.homeTeam.name, standings));
+    setAway(assigned?.away || suggestFromLabel(match.awayTeam.name, standings));
+  }, [assigned, standings, match]);
+
+  async function save() {
+    if (!home || !away || home === away) return;
+    setSaving(true);
+    const res = await fetch('/api/results', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-session-token': token },
+      body: JSON.stringify({ type: 'r32_team', matchId: match.id, home, away }),
+    });
+    setSaving(false);
+    if (res.ok) { setMsg('✓'); onUpdate(); setTimeout(() => setMsg(''), 1500); } else setMsg('Error');
+  }
+
+  const Sel = ({ value, set, other, label }: { value: string; set: (v: string) => void; other: string; label: string }) => (
+    <div>
+      <div className="text-[10px] text-amber-400/70 mb-0.5 font-mono truncate">{label}</div>
+      <select value={value} onChange={e => set(e.target.value)}
+        className="w-full border border-white/15 rounded px-1.5 py-1 text-white text-xs focus:outline-none focus:border-amber-400"
+        style={{ backgroundColor: '#0d1b35', colorScheme: 'dark' }}>
+        <option value="">—</option>
+        {allTeams.map(t => <option key={t.code} value={t.code} disabled={t.code === other}>{t.name}</option>)}
+      </select>
+    </div>
+  );
+
+  const done = !!home && !!away && home !== away;
+  return (
+    <div className={`match-card p-2 ${done ? 'bg-emerald-500/5' : ''}`}>
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[10px] text-slate-600 font-mono">#{match.id}</span>
+        {done && <span className="text-emerald-400 text-[10px]">●</span>}
+      </div>
+      <Sel value={home} set={setHome} other={away} label={match.homeTeam.name} />
+      <div className="text-center text-[10px] text-amber-400/40 font-bold py-0.5">vs</div>
+      <Sel value={away} set={setAway} other={home} label={match.awayTeam.name} />
+      <button onClick={save} disabled={saving || !home || !away || home === away}
+        className={`w-full mt-1.5 text-xs px-2 py-1 rounded font-bold border transition-all ${
+          msg === '✓' ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
+          : msg === 'Error' ? 'bg-red-500/20 border-red-500/40 text-red-400'
+          : 'bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20 disabled:opacity-40'}`}>
+        {saving ? '…' : msg || 'OK'}
+      </button>
+    </div>
+  );
+}
+
+// Nodo guía para rondas que aún no se asignan (octavos→final): muestra de dónde
+// saldrá cada equipo (ganador/perdedor de un partido previo).
+function FeederNode({ matchId }: { matchId: number }) {
+  const f = KO_FEEDERS[matchId];
+  const lbl = (fd: { type: 'winner' | 'loser'; match: number }) =>
+    `${fd.type === 'winner' ? 'Ganador' : 'Perdedor'} #${fd.match}`;
+  return (
+    <div className="match-card p-2 opacity-60">
+      <div className="text-[10px] text-slate-600 font-mono mb-1">#{matchId}</div>
+      <div className="text-[11px] text-slate-400 truncate">{lbl(f.home)}</div>
+      <div className="text-center text-[10px] text-slate-600 py-0.5">vs</div>
+      <div className="text-[11px] text-slate-400 truncate">{lbl(f.away)}</div>
     </div>
   );
 }
@@ -226,7 +403,7 @@ export default function SuperAdminPage() {
   const router = useRouter();
   const [sessionToken, setSessionToken] = useState('');
   const [loading,  setLoading]  = useState(true);
-  const [tab,      setTab]      = useState<'empresas' | 'resultados' | 'clasificaciones'>('empresas');
+  const [tab,      setTab]      = useState<'empresas' | 'resultados' | 'clasificaciones' | 'r32'>('empresas');
   const [empresas, setEmpresas] = useState<EmpresaRecord[]>([]);
   const [newName,  setNewName]  = useState('');
   const [newPw,    setNewPw]    = useState('');
@@ -239,10 +416,14 @@ export default function SuperAdminPage() {
   const [resGroup, setResGroup] = useState('A');
   const [results,  setResults]  = useState<Record<string, ResultEntry>>({});
   const [standings,setStandings]= useState<Record<string, GroupPos>>({});
+  const [r32Teams, setR32Teams] = useState<Record<string, { home: string; away: string }>>({});
 
   const fetchResults = useCallback(async () => {
     const r = await fetch('/api/results');
-    if (r.ok) { const d = await r.json(); setResults(d.results || {}); setStandings(d.standings || {}); }
+    if (r.ok) {
+      const d = await r.json();
+      setResults(d.results || {}); setStandings(d.standings || {}); setR32Teams(d.r32Teams || {});
+    }
   }, []);
 
   const fetchEmpresas = useCallback(async (t: string) => {
@@ -303,7 +484,6 @@ export default function SuperAdminPage() {
     router.push('/');
   }
 
-  const koRound = KNOCKOUT_ROUNDS.find(r => r.key === resPhase);
   if (loading) return <div className="min-h-screen flex items-center justify-center text-slate-400">Cargando...</div>;
 
   return (
@@ -325,6 +505,7 @@ export default function SuperAdminPage() {
             { key: 'empresas'        as const, label: `🏢 Empresas (${empresas.length})` },
             { key: 'resultados'      as const, label: '⚽ Resultados' },
             { key: 'clasificaciones' as const, label: '📋 Clasificaciones' },
+            { key: 'r32'             as const, label: '🗝️ Equipos 16avos' },
           ].map(t => (
             <button key={t.key} onClick={() => setTab(t.key)}
               className={`tab-btn ${tab === t.key ? 'tab-active' : 'tab-inactive'}`}>{t.label}</button>
@@ -428,10 +609,32 @@ export default function SuperAdminPage() {
             </div>
             <div className="flex flex-wrap gap-1.5 mb-4">
               <button onClick={() => setResPhase('grupos')} className={`tab-btn ${resPhase === 'grupos' ? 'tab-active' : 'tab-inactive'}`}>Grupos</button>
-              {KNOCKOUT_ROUNDS.map(r => (
-                <button key={r.key} onClick={() => setResPhase(r.key)} className={`tab-btn ${resPhase === r.key ? 'tab-active' : 'tab-inactive'}`}>{r.label}</button>
-              ))}
+              <button onClick={() => setResPhase('bracket')} className={`tab-btn ${resPhase === 'bracket' ? 'tab-active' : 'tab-inactive'}`}>🗝️ Mata-mata</button>
             </div>
+            {resPhase === 'bracket' && (
+              (() => {
+                const realSlots = resolveBracket(
+                  r32Teams,
+                  Object.fromEntries(Object.entries(results).filter(([, r]) => r.played).map(([id, r]) =>
+                    [id, { home: r.home, away: r.away, ...(r.winner ? { winner: r.winner } : {}) }])),
+                );
+                const r32Ready = Object.keys(r32Teams).length > 0;
+                if (!r32Ready) return (
+                  <div className="glass rounded-2xl p-8 text-center text-slate-400">
+                    <div className="text-3xl mb-2">🗝️</div>
+                    <p className="font-bold text-white mb-1">Primero asigna los equipos de 16avos</p>
+                    <p className="text-xs text-slate-500">Ve a la pestaña <strong className="text-amber-400">🗝️ Equipos 16avos</strong> y define los 32 equipos. Luego podrás ingresar los resultados aquí.</p>
+                  </div>
+                );
+                const node = (id: number) => {
+                  const m = getMatchById(id)!;
+                  const slot = realSlots[id] || {};
+                  return <AdminBracketCard match={m} homeCode={slot.home} awayCode={slot.away}
+                    result={results[String(id)]} token={sessionToken} onUpdate={fetchResults} />;
+                };
+                return <BracketLayout nodeWidth={180} renderNode={node} thirdNode={node(BRACKET.third)} />;
+              })()
+            )}
             {resPhase === 'grupos' && (
               <>
                 <div className="flex flex-wrap gap-1.5 mb-4">
@@ -451,21 +654,6 @@ export default function SuperAdminPage() {
                   ))}
                 </div>
               </>
-            )}
-            {koRound && (
-              <div className="glass rounded-2xl overflow-hidden">
-                <div className="border-b border-white/10 px-3 py-2 flex justify-between items-center">
-                  <h2 className="font-bold text-white text-sm">{koRound.label}</h2>
-                  <span className="text-xs text-amber-400">
-                    {ROUND_RULES[koRound.key]?.exact} exacto · {ROUND_RULES[koRound.key]?.result} resultado
-                    {koRound.key === 'final' ? ' · 50 campeón · 40 sub' : ` · ${ROUND_RULES[koRound.key]?.classified} clasif.`}
-                  </span>
-                </div>
-                {koRound.matches.map(match => (
-                  <AdminMatchRow key={match.id} match={match} result={results[String(match.id)]}
-                    token={sessionToken} onUpdate={fetchResults} isKnockout={true} />
-                ))}
-              </div>
             )}
           </div>
         )}
@@ -488,6 +676,29 @@ export default function SuperAdminPage() {
             <BestThirdsPanel standings={standings} token={sessionToken} onUpdate={fetchResults} />
           </div>
         )}
+
+        {/* ─── EQUIPOS DE 16AVOS ─── */}
+        {tab === 'r32' && (() => {
+          const allTeams = GROUPS.flatMap(g => getGroupTeams(g));
+          const assignedCount = R32_MATCHES.filter(m => r32Teams[String(m.id)]).length;
+          const r32Ids = new Set<number>([...BRACKET.left.r32, ...BRACKET.right.r32]);
+          const node = (id: number) =>
+            r32Ids.has(id)
+              ? <R32Row match={getMatchById(id)!} assigned={r32Teams[String(id)]}
+                  allTeams={allTeams} standings={standings} token={sessionToken} onUpdate={fetchResults} />
+              : <FeederNode matchId={id} />;
+          return (
+          <div className="fade-in">
+            <div className="glass rounded-xl p-4 mb-4 text-xs text-slate-400">
+              Asigna el equipo real de cada casilla de 16avos (columnas de los <strong className="text-amber-400">extremos</strong>).
+              Las casillas <strong className="text-amber-400">1°/2°</strong> se pre-llenan desde las <strong>Clasificaciones</strong>;
+              los <strong className="text-amber-400">mejores terceros</strong> se eligen a mano. El resto del cuadro es solo guía visual.
+              <span className="block mt-1">Progreso: <strong className={assignedCount === 16 ? 'text-emerald-400' : 'text-amber-400'}>{assignedCount}/16 llaves asignadas</strong>.</span>
+            </div>
+            <BracketLayout nodeWidth={188} renderNode={node} thirdNode={<FeederNode matchId={BRACKET.third} />} />
+          </div>
+          );
+        })()}
       </div>
     </main>
   );

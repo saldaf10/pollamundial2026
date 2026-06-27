@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionFromRequest, getScorePredictions, saveScorePrediction,
          getGroupPredictions, saveGroupPrediction, getResults } from '@/lib/dataStore';
-import { GROUP_MATCHES } from '@/lib/matchData';
-import { predictionsAreClosed, groupPosAreClosed } from '@/lib/config';
+import { GROUP_MATCHES, KNOCKOUT_MATCH_IDS } from '@/lib/matchData';
+import { predictionsAreClosed, groupPosAreClosed, knockoutAreClosed } from '@/lib/config';
 
 const GROUP_MATCH_IDS = new Set(GROUP_MATCHES.map(m => String(m.id)));
+const KO_MATCH_IDS = new Set(KNOCKOUT_MATCH_IDS.map(String));
 
 const CLOSED_RESPONSE = NextResponse.json(
   { error: 'El plazo de pronósticos cerró el 11 de junio. Ya no se pueden hacer cambios.' },
@@ -13,6 +14,11 @@ const CLOSED_RESPONSE = NextResponse.json(
 
 const GROUP_POS_CLOSED_RESPONSE = NextResponse.json(
   { error: 'El plazo para clasificados cerró al inicio del primer partido.' },
+  { status: 403 }
+);
+
+const KO_CLOSED_RESPONSE = NextResponse.json(
+  { error: 'El plazo de pronósticos del mata-mata ya cerró.' },
   { status: 403 }
 );
 
@@ -43,15 +49,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  if (predictionsAreClosed()) return CLOSED_RESPONSE;
-
   const { matchId, home, away, winner } = body;
   if (matchId === undefined)
     return NextResponse.json({ error: 'matchId requerido' }, { status: 400 });
-  if (!GROUP_MATCH_IDS.has(String(matchId)))
-    return NextResponse.json({ error: 'Solo se permiten pronósticos de fase de grupos' }, { status: 403 });
+
+  const mid = String(matchId);
+  const isGroup = GROUP_MATCH_IDS.has(mid);
+  const isKnockout = KO_MATCH_IDS.has(mid);
+  if (!isGroup && !isKnockout)
+    return NextResponse.json({ error: 'Partido inválido' }, { status: 403 });
+  if (isGroup && predictionsAreClosed()) return CLOSED_RESPONSE;
+  if (isKnockout && knockoutAreClosed()) return KO_CLOSED_RESPONSE;
+
   const results = await getResults();
-  if (results[String(matchId)]?.locked)
+  if (results[mid]?.locked)
     return NextResponse.json({ error: 'Partido bloqueado' }, { status: 403 });
   await saveScorePrediction(session.empresaSlug, session.username, Number(matchId),
     { home: Number(home), away: Number(away), ...(winner ? { winner } : {}) });

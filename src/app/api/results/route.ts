@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getResults, setMatchResult, setMatchLocked, getGroupStandings, setGroupStanding,
-         setThirdClassified, getSessionFromRequest } from '@/lib/dataStore';
+         setThirdClassified, getR32Teams, setR32Team, getSessionFromRequest } from '@/lib/dataStore';
 
 export async function GET() {
-  return NextResponse.json({ results: await getResults(), standings: await getGroupStandings() });
+  return NextResponse.json({
+    results: await getResults(),
+    standings: await getGroupStandings(),
+    r32Teams: await getR32Teams(),
+  });
 }
 
 export async function POST(req: NextRequest) {
@@ -25,6 +29,14 @@ export async function POST(req: NextRequest) {
     const { group, thirdClassified } = body;
     if (!group) return NextResponse.json({ error: 'grupo requerido' }, { status: 400 });
     await setThirdClassified(group, Boolean(thirdClassified));
+    return NextResponse.json({ ok: true });
+  }
+
+  if (body.type === 'r32_team') {
+    const { matchId, home, away } = body;
+    if (matchId === undefined || !home || !away)
+      return NextResponse.json({ error: 'Datos incompletos' }, { status: 400 });
+    await setR32Team(Number(matchId), String(home), String(away));
     return NextResponse.json({ ok: true });
   }
 

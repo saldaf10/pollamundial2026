@@ -3,7 +3,7 @@ import {
   getSessionFromRequest, getUsersByEmpresa,
   getAllScorePredictions, getAllGroupPredictions,
   getScorePredictions, getGroupPredictions,
-  getResults, getGroupStandings,
+  getResults, getGroupStandings, getR32Teams,
 } from '@/lib/dataStore';
 
 export async function GET(req: NextRequest) {
@@ -16,13 +16,14 @@ export async function GET(req: NextRequest) {
   const username = searchParams.get('username');
 
   if (username) {
-    const [predictions, groupPredictions, results, standings] = await Promise.all([
+    const [predictions, groupPredictions, results, standings, r32Teams] = await Promise.all([
       getScorePredictions(slug, username),
       getGroupPredictions(slug, username),
       getResults(),
       getGroupStandings(),
+      getR32Teams(),
     ]);
-    return NextResponse.json({ predictions, groupPredictions, results, standings });
+    return NextResponse.json({ predictions, groupPredictions, results, standings, r32Teams });
   }
 
   const [allScorePreds, allGroupPreds, participants] = await Promise.all([

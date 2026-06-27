@@ -1,13 +1,16 @@
 'use client';
-import { useState, useEffect, useCallback, useRef, Suspense } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, Suspense } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
-  GROUPS, ALL_MATCHES, getMatchesByGroup, getGroupTeams, type Match, type Team,
+  GROUPS, ALL_MATCHES, KNOCKOUT_MATCH_IDS, getMatchesByGroup, getGroupTeams,
+  getTeamByCode, getMatchById, type Match, type Team,
 } from '@/lib/matchData';
-import { calcMatchPoints, calcClassifiedPoints, calcGroupPositionPoints, ROUND_RULES, derivedWinner, type Side } from '@/lib/scoring';
-import { PREDICTIONS_DEADLINE_ISO, GROUP_POS_DEADLINE_ISO } from '@/lib/config';
+import { calcMatchPoints, calcGroupPositionPoints, computeKnockoutPoints, resolveBracket,
+  ROUND_RULES, derivedWinner, type Side } from '@/lib/scoring';
+import { PREDICTIONS_DEADLINE_ISO, GROUP_POS_DEADLINE_ISO, KNOCKOUT_DEADLINE_ISO } from '@/lib/config';
 import { Flag } from '@/components/Flag';
+import { BracketLayout, BRACKET } from '@/components/Bracket';
 
 interface ResultEntry { home: number; away: number; played: boolean; locked: boolean; winner?: Side; }
 interface ScorePred   { home: number; away: number; winner?: Side; }
@@ -45,8 +48,6 @@ function MatchCard({ match, prediction, result, onSave, saving, isKnockout, clos
   const rules    = ROUND_RULES[match.round];
   const maxPts   = rules?.exact ?? 4;
   const matchPts = isPlayed && prediction && result ? calcMatchPoints(prediction, result, match.round) : null;
-  const classPts = isPlayed && prediction && result && isKnockout
-    ? calcClassifiedPoints(prediction, w ?? null, result, result.winner ?? null, match.round) : null;
 
   function handleSave() {
     const hn = parseInt(h), an = parseInt(a);
@@ -63,7 +64,6 @@ function MatchCard({ match, prediction, result, onSave, saving, isKnockout, clos
         {result?.locked && !closed && <span className="ml-auto text-xs text-amber-500">🔒 Cerrado</span>}
         {isPlayed && matchPts !== null && (
           <span className="ml-auto flex gap-1.5 items-center">
-            {classPts !== null && classPts > 0 && <span className="badge-exact text-xs font-bold px-2 py-0.5 rounded-full">+{classPts} clasif.</span>}
             <PtsBadge pts={matchPts} max={maxPts} />
           </span>
         )}
@@ -198,6 +198,106 @@ function GroupPosCard({ group, teams, prediction, standing, onSave, closed, thir
   );
 }
 
+function KnockoutCard({ match, homeCode, awayCode, realAdvCode, pending, result, onChange, onSave, closed, saving }: {
+  match: Match; homeCode?: string; awayCode?: string; realAdvCode?: string;
+  pending?: { h: string; a: string; w?: Side }; result?: ResultEntry;
+  onChange: (id: number, h: string, a: string, w?: Side) => void;
+  onSave: (id: number) => void; closed: boolean; saving: boolean;
+}) {
+  const [saved, setSaved] = useState(false);
+  const home = homeCode ? getTeamByCode(homeCode) : undefined;
+  const away = awayCode ? getTeamByCode(awayCode) : undefined;
+  const ready = !!home && !!away;
+  const h = pending?.h ?? '';
+  const a = pending?.a ?? '';
+  const w = pending?.w;
+  const isLocked = closed || result?.locked;
+  const isPlayed = result?.played;
+  const isDraw = h !== '' && a !== '' && parseInt(h) === parseInt(a);
+  const incomplete = h === '' || a === '' || (isDraw && !w);
+  const rules = ROUND_RULES[match.round];
+
+  // Equipo que el participante hace avanzar
+  const myAdv = !ready || incomplete ? undefined
+    : isDraw ? (w === 'home' ? homeCode : awayCode)
+    : (parseInt(h) > parseInt(a) ? homeCode : awayCode);
+  const advRight = isPlayed && realAdvCode ? myAdv === realAdvCode : null;
+
+  function handleSave() {
+    if (!ready || incomplete) return;
+    onSave(match.id);
+    setSaved(true); setTimeout(() => setSaved(false), 1500);
+  }
+
+  const TeamRow = ({ team, side }: { team?: Team; side: Side }) => (
+    <div className="flex items-center gap-2 min-w-0">
+      <Flag isoCode={team?.isoCode ?? ''} name={team?.name ?? ''} size={20} />
+      <span className={`text-xs font-semibold truncate ${team ? 'text-white' : 'text-slate-600 italic'}`}>
+        {team?.name ?? 'Por definir'}
+      </span>
+      {myAdv && ((side === 'home' && myAdv === homeCode) || (side === 'away' && myAdv === awayCode)) && (
+        <span className="ml-auto text-emerald-400 text-xs shrink-0" title="Avanza">▲</span>
+      )}
+    </div>
+  );
+
+  return (
+    <div className={`match-card p-3 ${isLocked ? 'locked' : ''} ${!ready ? 'opacity-60' : ''}`}>
+      <div className="flex items-center gap-1.5 mb-2">
+        <span className="text-xs text-slate-600 font-mono">#{match.id}</span>
+        {result?.locked && !closed && <span className="text-xs text-amber-500">🔒</span>}
+        {advRight !== null && (
+          <span className={`ml-auto text-xs font-bold ${advRight ? 'text-emerald-400' : 'text-red-400'}`}>
+            {advRight ? '✓ acertó' : '✗ falló'}
+          </span>
+        )}
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-center gap-2">
+          <div className="flex-1 min-w-0"><TeamRow team={home} side="home" /></div>
+          <input type="number" min={0} max={20} value={h} disabled={!ready || !!isLocked || saving}
+            onChange={e => onChange(match.id, e.target.value, a, w)}
+            className="score-input w-9 h-8 text-sm" />
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex-1 min-w-0"><TeamRow team={away} side="away" /></div>
+          <input type="number" min={0} max={20} value={a} disabled={!ready || !!isLocked || saving}
+            onChange={e => onChange(match.id, h, e.target.value, w)}
+            className="score-input w-9 h-8 text-sm" />
+        </div>
+      </div>
+      {isDraw && ready && !isLocked && (
+        <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+          <span className="text-xs text-amber-400">Penales:</span>
+          {(['home', 'away'] as Side[]).map(side => (
+            <button key={side} onClick={() => onChange(match.id, h, a, side)}
+              className={`px-2 py-0.5 rounded text-xs font-bold border transition-all ${
+                w === side ? 'bg-amber-500/20 border-amber-400/60 text-amber-300' : 'bg-white/5 border-white/10 text-slate-400'}`}>
+              {(side === 'home' ? home : away)?.name}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="mt-2 flex items-center gap-2">
+        {isPlayed && result && (
+          <span className="text-xs text-slate-500">Real: <strong className="text-white">{result.home}–{result.away}</strong></span>
+        )}
+        {!isLocked && (
+          <button onClick={handleSave} disabled={saving || !ready || incomplete}
+            className={`ml-auto px-3 py-1 rounded-lg text-xs font-bold transition-all border ${
+              saved ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
+                    : 'bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20 disabled:opacity-40'}`}>
+            {saved ? '✓' : 'OK'}
+          </button>
+        )}
+      </div>
+      <div className="mt-1 text-center text-[10px] text-slate-600">
+        {rules?.exact} exacto · {rules?.result} result · {match.round === 'final' ? `${rules?.champion} campeón` : `${rules?.classified} clasif.`}
+      </div>
+    </div>
+  );
+}
+
 function DeadlineBanner({ closed, countdown }: { closed: boolean; countdown: string }) {
   if (closed) {
     return (
@@ -226,20 +326,25 @@ function DeadlineBanner({ closed, countdown }: { closed: boolean; countdown: str
 function PredictContent() {
   const router = useRouter();
   const [session,      setSession]      = useState<SessionUser | null>(null);
-  const [phase,        setPhase]        = useState<'grupos' | 'clasificados'>('grupos');
+  const [phase,        setPhase]        = useState<'grupos' | 'clasificados' | 'eliminatorias'>('grupos');
   const [group,        setGroup]        = useState('A');
   const [preds,        setPreds]        = useState<Record<string, ScorePred>>({});
   const [gPreds,       setGPreds]       = useState<Record<string, GroupPos>>({});
   const [results,      setResults]      = useState<Record<string, ResultEntry>>({});
   const [standings,    setStandings]    = useState<Record<string, GroupStanding>>({});
+  const [r32Teams,     setR32Teams]     = useState<Record<string, { home: string; away: string }>>({});
   const [saving,       setSaving]       = useState(false);
   const [loading,      setLoading]      = useState(true);
   const [countdown,         setCountdown]         = useState('');
   const [isClosed,          setIsClosed]          = useState(false);
   const [isGroupPosClosed,  setIsGroupPosClosed]  = useState(false);
   const [groupPosCountdown, setGroupPosCountdown] = useState('');
+  const [isKoClosed,        setIsKoClosed]        = useState(false);
+  const [koCountdown,       setKoCountdown]       = useState('');
   const [groupPending, setGroupPending] = useState<Record<number, { h: string; a: string; w?: Side }>>({});
+  const [koPending,    setKoPending]    = useState<Record<number, { h: string; a: string; w?: Side }>>({});
   const [batchSaved,   setBatchSaved]   = useState(false);
+  const [koBatchSaved, setKoBatchSaved] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   function token() { return localStorage.getItem('wc26_token') || ''; }
@@ -250,13 +355,14 @@ function PredictContent() {
       fetch('/api/results'),
     ]);
     if (p.ok) { const d = await p.json(); setPreds(d.predictions || {}); setGPreds(d.groupPredictions || {}); }
-    if (r.ok) { const d = await r.json(); setResults(d.results || {}); setStandings(d.standings || {}); }
+    if (r.ok) { const d = await r.json(); setResults(d.results || {}); setStandings(d.standings || {}); setR32Teams(d.r32Teams || {}); }
     setLoading(false);
   }, []);
 
   useEffect(() => {
     const scoreDeadline  = new Date(PREDICTIONS_DEADLINE_ISO);
     const groupDeadline  = new Date(GROUP_POS_DEADLINE_ISO);
+    const koDeadline     = new Date(KNOCKOUT_DEADLINE_ISO);
     function fmt(diff: number) {
       const days  = Math.floor(diff / 86400000);
       const hours = Math.floor((diff % 86400000) / 3600000);
@@ -267,11 +373,14 @@ function PredictContent() {
       const now = new Date();
       const scoreDiff = scoreDeadline.getTime() - now.getTime();
       const groupDiff = groupDeadline.getTime() - now.getTime();
+      const koDiff    = koDeadline.getTime() - now.getTime();
       setIsClosed(scoreDiff <= 0);
       setCountdown(scoreDiff > 0 ? fmt(scoreDiff) : '');
       setIsGroupPosClosed(groupDiff <= 0);
       setGroupPosCountdown(groupDiff > 0 ? fmt(groupDiff) : '');
-      if (scoreDiff <= 0 && groupDiff <= 0 && intervalRef.current) clearInterval(intervalRef.current);
+      setIsKoClosed(koDiff <= 0);
+      setKoCountdown(koDiff > 0 ? fmt(koDiff) : '');
+      if (scoreDiff <= 0 && groupDiff <= 0 && koDiff <= 0 && intervalRef.current) clearInterval(intervalRef.current);
     }
     tick();
     intervalRef.current = setInterval(tick, 60000);
@@ -301,6 +410,43 @@ function PredictContent() {
     setBatchSaved(false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [group, loading]);
+
+  // Inicializa el bracket de mata-mata desde las predicciones guardadas (una vez al cargar).
+  useEffect(() => {
+    if (loading) return;
+    const init: Record<number, { h: string; a: string; w?: Side }> = {};
+    for (const id of KNOCKOUT_MATCH_IDS) {
+      const p = preds[String(id)];
+      if (p) init[id] = { h: String(p.home), a: String(p.away), w: p.winner };
+    }
+    setKoPending(init);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading]);
+
+  // Bracket resuelto en vivo desde lo que el participante va llenando.
+  const koSlots = useMemo(() => {
+    const scoreMap: Record<string, { home: number; away: number; winner?: Side }> = {};
+    for (const id of KNOCKOUT_MATCH_IDS) {
+      const v = koPending[id];
+      if (!v) continue;
+      const hn = parseInt(v.h), an = parseInt(v.a);
+      if (isNaN(hn) || isNaN(an)) continue;
+      scoreMap[String(id)] = { home: hn, away: an, ...(v.w ? { winner: v.w } : {}) };
+    }
+    return resolveBracket(r32Teams, scoreMap);
+  }, [koPending, r32Teams]);
+
+  // Bracket real (para mostrar aciertos por llave).
+  const koRealSlots = useMemo(() => {
+    const scoreMap: Record<string, { home: number; away: number; winner?: Side }> = {};
+    for (const [id, res] of Object.entries(results)) {
+      if (!res.played) continue;
+      scoreMap[id] = { home: res.home, away: res.away, ...(res.winner ? { winner: res.winner } : {}) };
+    }
+    return resolveBracket(r32Teams, scoreMap);
+  }, [results, r32Teams]);
+
+  const r32Ready = Object.keys(r32Teams).length > 0;
 
   async function saveScore(matchId: number, h: number, a: number, w?: Side) {
     if (isClosed) return;
@@ -352,6 +498,56 @@ function PredictContent() {
     setSaving(false);
   }
 
+  function onKoChange(id: number, h: string, a: string, w?: Side) {
+    setKoPending(prev => ({ ...prev, [id]: { h, a, w } }));
+  }
+
+  function koBody(id: number): { matchId: number; home: number; away: number; winner?: Side } | null {
+    const v = koPending[id];
+    if (!v) return null;
+    const hn = parseInt(v.h), an = parseInt(v.a);
+    if (isNaN(hn) || isNaN(an)) return null;
+    const tie = hn === an;
+    const winner: Side | undefined = tie ? v.w : (hn > an ? 'home' : 'away');
+    if (tie && !winner) return null; // empate sin definir penales
+    return { matchId: id, home: hn, away: an, winner };
+  }
+
+  async function saveKoMatch(id: number) {
+    if (isKoClosed) return;
+    const body = koBody(id);
+    if (!body) return;
+    setSaving(true);
+    await fetch('/api/predictions', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-session-token': token() },
+      body: JSON.stringify(body),
+    });
+    setPreds(prev => ({ ...prev, [String(id)]: { home: body.home, away: body.away, winner: body.winner } }));
+    setSaving(false);
+  }
+
+  async function saveKoAll() {
+    if (isKoClosed) return;
+    const bodies = KNOCKOUT_MATCH_IDS
+      .filter(id => koSlots[id]?.home && koSlots[id]?.away)
+      .map(id => koBody(id))
+      .filter((b): b is NonNullable<ReturnType<typeof koBody>> => b !== null);
+    if (bodies.length === 0) return;
+    setSaving(true);
+    await Promise.all(bodies.map(b => fetch('/api/predictions', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-session-token': token() },
+      body: JSON.stringify(b),
+    })));
+    setPreds(prev => {
+      const updated = { ...prev };
+      bodies.forEach(b => { updated[String(b.matchId)] = { home: b.home, away: b.away, winner: b.winner }; });
+      return updated;
+    });
+    setSaving(false);
+    setKoBatchSaved(true);
+    setTimeout(() => setKoBatchSaved(false), 2000);
+  }
+
   async function logout() {
     await fetch('/api/auth/logout', { method: 'POST', headers: { 'x-session-token': token() } });
     localStorage.removeItem('wc26_token'); localStorage.removeItem('wc26_user');
@@ -360,27 +556,26 @@ function PredictContent() {
 
   const thirdsCount = GROUPS.filter(g => !!gPreds[g]?.third).length;
 
-  const { matchPts, posPts } = (() => {
-    let mp = 0, cp = 0, pp = 0;
+  const { matchPts, posPts, koPts } = (() => {
+    let mp = 0, pp = 0;
     for (const [mid, res] of Object.entries(results)) {
       if (!res.played) continue;
       const pred = preds[mid];
       if (!pred) continue;
       const match = ALL_MATCHES.find(m => String(m.id) === mid);
-      if (!match) continue;
+      if (!match || match.round !== 'group') continue;
       mp += calcMatchPoints(pred, res, match.round);
-      if (ROUND_RULES[match.round]?.classified !== undefined || match.round === 'final')
-        cp += calcClassifiedPoints(pred, pred.winner ?? null, res, res.winner ?? null, match.round);
     }
     for (const g of GROUPS) {
       const actual = standings[g], predicted = gPreds[g];
       if (!actual || !predicted) continue;
       pp += calcGroupPositionPoints(predicted, actual);
     }
-    return { matchPts: mp, posPts: pp };
+    const ko = computeKnockoutPoints(r32Teams, results, preds);
+    return { matchPts: mp, posPts: pp, koPts: ko.total };
   })();
 
-  const totalPts    = matchPts + posPts;
+  const totalPts    = matchPts + posPts + koPts;
   const playedCount = Object.values(results).filter(r => r.played).length;
 
   if (!session) return null;
@@ -410,14 +605,15 @@ function PredictContent() {
         <DeadlineBanner closed={isClosed} countdown={countdown} />
 
         {!loading && (
-          <div className="grid grid-cols-3 gap-2 mb-5 fade-in">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-5 fade-in">
             <div className="glass rounded-xl p-3 text-center"><div className="text-base font-black text-white">{matchPts}</div><div className="text-xs text-slate-500">marcadores</div></div>
             <div className="glass rounded-xl p-3 text-center"><div className="text-base font-black text-white">{posPts}</div><div className="text-xs text-slate-500">posiciones</div></div>
+            <div className="glass rounded-xl p-3 text-center"><div className="text-base font-black text-white">{koPts}</div><div className="text-xs text-slate-500">mata-mata</div></div>
             <div className="glass rounded-xl p-3 text-center"><div className="text-base font-black text-white">{playedCount}</div><div className="text-xs text-slate-500">jugados</div></div>
           </div>
         )}
         <div className="flex flex-wrap gap-1.5 mb-4">
-          {[{ key: 'grupos' as const, label: '⚽ Partidos de Grupos' }, { key: 'clasificados' as const, label: '📋 Clasificados por Grupo' }].map(tab => (
+          {[{ key: 'grupos' as const, label: '⚽ Partidos de Grupos' }, { key: 'clasificados' as const, label: '📋 Clasificados por Grupo' }, { key: 'eliminatorias' as const, label: '🗝️ Eliminatorias' }].map(tab => (
             <button key={tab.key} onClick={() => setPhase(tab.key)}
               className={`tab-btn ${phase === tab.key ? 'tab-active' : 'tab-inactive'}`}>{tab.label}</button>
           ))}
@@ -522,6 +718,73 @@ function PredictContent() {
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {phase === 'eliminatorias' && (
+          <div className="fade-in">
+            {isKoClosed ? (
+              <div className="rounded-xl px-4 py-3 mb-4 flex items-center gap-3 text-sm"
+                style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)' }}>
+                <span className="text-xl">🔒</span>
+                <div>
+                  <div className="font-bold text-red-400">Mata-mata cerrado</div>
+                  <div className="text-xs text-slate-400">Los pronósticos de eliminatorias ya no se pueden modificar.</div>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-xl px-4 py-3 mb-4 flex items-center gap-3 text-sm"
+                style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)' }}>
+                <span className="text-xl">⏳</span>
+                <div>
+                  <div className="font-bold text-amber-400">Eliminatorias abiertas</div>
+                  <div className="text-xs text-slate-400">
+                    Pon el marcador de cada llave; el sistema calcula quién avanza. En empate, elige quién pasa por penales.
+                    {koCountdown ? ` · Cierra en ${koCountdown}` : ''}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {loading ? <div className="text-center py-16 text-slate-500">Cargando...</div>
+              : !r32Ready ? (
+                <div className="glass rounded-2xl p-8 text-center text-slate-400">
+                  <div className="text-3xl mb-2">🗝️</div>
+                  <p className="font-bold text-white mb-1">El bracket aún no está disponible</p>
+                  <p className="text-xs text-slate-500">El organizador todavía no ha definido los equipos de 16avos. Vuelve cuando termine la fase de grupos.</p>
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                    <p className="text-xs text-slate-500">Desliza horizontalmente para ver todas las rondas →</p>
+                    {!isKoClosed && (
+                      <button onClick={saveKoAll} disabled={saving}
+                        className={`text-xs px-3 py-1.5 rounded-lg font-bold border transition-all ${
+                          koBatchSaved
+                            ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
+                            : 'bg-white/5 border-white/15 text-slate-300 hover:bg-amber-500/10 hover:border-amber-500/30 hover:text-amber-400'}`}>
+                        {koBatchSaved ? '✓ Guardado' : 'Guardar bracket'}
+                      </button>
+                    )}
+                  </div>
+                  <BracketLayout nodeWidth={172}
+                    renderNode={id => {
+                      const m = getMatchById(id)!;
+                      const slot = koSlots[id] || {};
+                      return <KnockoutCard match={m} homeCode={slot.home} awayCode={slot.away}
+                        realAdvCode={koRealSlots[id]?.adv} pending={koPending[id]} result={results[String(id)]}
+                        onChange={onKoChange} onSave={saveKoMatch} closed={isKoClosed} saving={saving} />;
+                    }}
+                    thirdNode={(() => {
+                      const m = getMatchById(BRACKET.third)!;
+                      const slot = koSlots[BRACKET.third] || {};
+                      return <KnockoutCard match={m} homeCode={slot.home} awayCode={slot.away}
+                        realAdvCode={koRealSlots[BRACKET.third]?.adv} pending={koPending[BRACKET.third]} result={results[String(BRACKET.third)]}
+                        onChange={onKoChange} onSave={saveKoMatch} closed={isKoClosed} saving={saving} />;
+                    })()}
+                  />
+                </>
+              )}
           </div>
         )}
       </div>

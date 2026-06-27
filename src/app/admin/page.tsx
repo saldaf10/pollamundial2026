@@ -2,9 +2,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { GROUPS, GROUP_MATCHES, getMatchesByGroup, getGroupTeams } from '@/lib/matchData';
-import { calcMatchPoints, calcGroupPositionPoints } from '@/lib/scoring';
+import { GROUPS, GROUP_MATCHES, getMatchesByGroup, getGroupTeams, getTeamByCode, getMatchById } from '@/lib/matchData';
+import { calcMatchPoints, calcGroupPositionPoints, computeKnockoutPoints, resolveBracket, ROUND_RULES, type Side } from '@/lib/scoring';
 import { Flag } from '@/components/Flag';
+import { BracketLayout, BRACKET } from '@/components/Bracket';
 
 interface UserRow { id: string; username: string; displayName: string; active: boolean; createdAt: string; }
 interface SessionUser { username: string; displayName: string; role: string; empresaSlug: string; empresaName: string; }
@@ -17,6 +18,7 @@ interface DetailData {
   groupPredictions: Record<string, GroupPos>;
   results: Record<string, ResultEntry>;
   standings: Record<string, GroupStanding>;
+  r32Teams?: Record<string, { home: string; away: string }>;
 }
 
 export default function AdminPage() {
@@ -41,7 +43,7 @@ export default function AdminPage() {
   const [selectedUser,  setSelectedUser]  = useState<UserRow | null>(null);
   const [detail,        setDetail]        = useState<DetailData | null>(null);
   const [detailGroup,   setDetailGroup]   = useState('A');
-  const [detailPhase,   setDetailPhase]   = useState<'grupos' | 'clasificados'>('grupos');
+  const [detailPhase,   setDetailPhase]   = useState<'grupos' | 'clasificados' | 'eliminatorias'>('grupos');
   const [loadingPollas, setLoadingPollas] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
 
@@ -159,7 +161,13 @@ export default function AdminPage() {
       const s = detail.standings[g], p = detail.groupPredictions[g];
       if (s && p) pp += calcGroupPositionPoints(p, s);
     }
-    return { matchPts: mp, posPts: pp, total: mp + pp };
+    const ko = computeKnockoutPoints(
+      detail.r32Teams || {},
+      detail.results as Record<string, { home: number; away: number; played?: boolean; winner?: 'home' | 'away' }>,
+      detail.predictions as Record<string, { home: number; away: number; winner?: 'home' | 'away' }>,
+    );
+    const matchPts = mp + ko.score;
+    return { matchPts, posPts: pp, koPts: ko.advance, total: matchPts + pp + ko.advance };
   })() : null;
 
   if (loading) return <div className="min-h-screen flex items-center justify-center text-slate-400">Cargando...</div>;
@@ -320,10 +328,14 @@ export default function AdminPage() {
                   <>
                     {/* Points mini-summary */}
                     {totalPts !== null && (
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-3 gap-2">
                         <div className="glass rounded-xl p-3 text-center">
                           <div className="text-lg font-black text-white">{totalPts.matchPts}</div>
                           <div className="text-xs text-slate-500">marcadores</div>
+                        </div>
+                        <div className="glass rounded-xl p-3 text-center">
+                          <div className="text-lg font-black text-white">{totalPts.koPts}</div>
+                          <div className="text-xs text-slate-500">mata-mata</div>
                         </div>
                         <div className="glass rounded-xl p-3 text-center">
                           <div className="text-lg font-black text-white">{totalPts.posPts}</div>
@@ -341,6 +353,10 @@ export default function AdminPage() {
                       <button onClick={() => setDetailPhase('clasificados')}
                         className={`tab-btn ${detailPhase === 'clasificados' ? 'tab-active' : 'tab-inactive'}`}>
                         📋 Clasificados
+                      </button>
+                      <button onClick={() => setDetailPhase('eliminatorias')}
+                        className={`tab-btn ${detailPhase === 'eliminatorias' ? 'tab-active' : 'tab-inactive'}`}>
+                        🗝️ Mata-mata
                       </button>
                     </div>
 
@@ -477,6 +493,64 @@ export default function AdminPage() {
                         })}
                       </div>
                     )}
+
+                    {/* Mata-mata */}
+                    {detailPhase === 'eliminatorias' && (() => {
+                      const r32 = detail.r32Teams || {};
+                      const predScores = Object.fromEntries(
+                        Object.entries(detail.predictions).map(([id, p]) =>
+                          [id, { home: p.home, away: p.away, ...(p.winner ? { winner: p.winner as Side } : {}) }]));
+                      const realScores = Object.fromEntries(
+                        Object.entries(detail.results).filter(([, r]) => r.played).map(([id, r]) =>
+                          [id, { home: r.home, away: r.away, ...(r.winner ? { winner: r.winner as Side } : {}) }]));
+                      const predB = resolveBracket(r32, predScores);
+                      const realB = resolveBracket(r32, realScores);
+                      const tName = (c?: string) => (c ? getTeamByCode(c)?.name ?? c : '—');
+                      const tIso  = (c?: string) => (c ? getTeamByCode(c)?.isoCode ?? '' : '');
+                      if (Object.keys(r32).length === 0)
+                        return <div className="glass rounded-2xl p-8 text-center text-slate-500 fade-in text-sm">El bracket aún no está disponible (faltan los equipos de 16avos).</div>;
+                      const node = (id: number) => {
+                        const m = getMatchById(id)!;
+                        const ps = predB[id] || {}, rs = realB[id] || {};
+                        const pred = detail.predictions[String(id)];
+                        const res  = detail.results[String(id)];
+                        const played = res?.played;
+                        const advRight = played && rs.adv ? ps.adv === rs.adv : null;
+                        const rules = ROUND_RULES[m.round];
+                        const scorePts = played && pred && ps.home === rs.home && ps.away === rs.away
+                          ? calcMatchPoints({ home: pred.home, away: pred.away }, { home: res!.home, away: res!.away }, m.round) : 0;
+                        const advPts = advRight ? (m.round === 'final' ? (rules?.champion ?? 0) : (rules?.classified ?? 0)) : 0;
+                        return (
+                          <div className="glass rounded-xl p-2 text-xs">
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-slate-600 font-mono text-[10px]">#{id}</span>
+                              {advRight !== null && (
+                                <span className={`text-[10px] font-bold ${advRight ? 'text-emerald-400' : 'text-red-400'}`}>
+                                  {advRight ? `✓ +${advPts + scorePts}` : `✗ +${scorePts}`}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1 mb-0.5">
+                              <Flag isoCode={tIso(ps.home)} name="" size={13} />
+                              <span className="text-slate-300 truncate flex-1">{tName(ps.home)}</span>
+                              <span className="text-white font-bold">{pred ? pred.home : '–'}</span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <Flag isoCode={tIso(ps.away)} name="" size={13} />
+                              <span className="text-slate-300 truncate flex-1">{tName(ps.away)}</span>
+                              <span className="text-white font-bold">{pred ? pred.away : '–'}</span>
+                            </div>
+                            {ps.adv && <div className="text-[10px] text-amber-400/80 mt-0.5">▲ {tName(ps.adv)}</div>}
+                            {played && (
+                              <div className="mt-1 pt-1 border-t border-white/10 text-[10px] text-slate-500 truncate">
+                                Real: {res!.home}–{res!.away}{rs.adv && <span className="text-emerald-400/70"> · {tName(rs.adv)}</span>}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      };
+                      return <BracketLayout nodeWidth={164} renderNode={node} thirdNode={node(BRACKET.third)} />;
+                    })()}
                   </>
                 )}
               </div>

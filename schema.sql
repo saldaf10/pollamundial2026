@@ -65,10 +65,19 @@ CREATE TABLE IF NOT EXISTS standings (
   third_classified  BOOLEAN NOT NULL DEFAULT false
 );
 
+-- Equipos reales asignados a cada llave de 16avos (match_id 73–88).
+-- home_team / away_team guardan el código de equipo (ej. 'H4', 'A1').
+CREATE TABLE IF NOT EXISTS r32_teams (
+  match_id   INTEGER PRIMARY KEY,
+  home_team  TEXT NOT NULL,
+  away_team  TEXT NOT NULL
+);
+
 -- Migration: run these if the tables already exist
 -- ALTER TABLE group_predictions ADD COLUMN IF NOT EXISTS third TEXT;
 -- ALTER TABLE standings ADD COLUMN IF NOT EXISTS third TEXT;
 -- ALTER TABLE standings ADD COLUMN IF NOT EXISTS third_classified BOOLEAN NOT NULL DEFAULT false;
+-- CREATE TABLE IF NOT EXISTS r32_teams (match_id INTEGER PRIMARY KEY, home_team TEXT NOT NULL, away_team TEXT NOT NULL);
 
 -- ── Superadmin ──────────────────────────────────────────────────────────────
 -- Cambia 'TU_CLAVE_AQUI' por la contraseña que quieras antes de ejecutar.

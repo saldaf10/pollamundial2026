@@ -320,3 +320,29 @@ export async function setGroupStanding(
 export async function setThirdClassified(group: string, thirdClassified: boolean): Promise<void> {
   await sql`UPDATE standings SET third_classified = ${thirdClassified} WHERE group_name = ${group}`;
 }
+
+// ─── R32 teams (global) ─────────────────────────────────────────────────────
+// Equipos reales asignados a cada llave de 16avos (73–88). El admin los define.
+
+export type R32TeamsMap = Record<string, { home: string; away: string }>;
+
+export async function getR32Teams(): Promise<R32TeamsMap> {
+  try {
+    const { rows } = await sql`SELECT * FROM r32_teams`;
+    const out: R32TeamsMap = {};
+    for (const r of rows) out[String(r.match_id)] = { home: r.home_team, away: r.away_team };
+    return out;
+  } catch {
+    // La tabla puede no existir todavía (antes de correr la migración): no rompas el resto.
+    return {};
+  }
+}
+
+export async function setR32Team(matchId: number, home: string, away: string): Promise<void> {
+  await sql`
+    INSERT INTO r32_teams (match_id, home_team, away_team)
+    VALUES (${matchId}, ${home}, ${away})
+    ON CONFLICT (match_id)
+    DO UPDATE SET home_team = EXCLUDED.home_team, away_team = EXCLUDED.away_team
+  `;
+}
