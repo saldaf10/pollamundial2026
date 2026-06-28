@@ -136,6 +136,13 @@ export function resolveBracket(r32Teams: R32TeamsInput, scores: KOScoreMap): Rec
   return out;
 }
 
+// Partidos de mata-mata que NO otorgan puntos (p.ej. jugados antes de que se
+// cerraran los pronósticos). El partido SÍ sigue alimentando el bracket —su
+// ganador avanza a la siguiente llave— pero no suma puntos de avance ni marcador.
+export const NON_SCORING_MATCH_IDS = new Set<number>([
+  73, // 16avos Sudáfrica vs Canadá (28 jun 2026): se jugó antes de cerrar pronósticos
+]);
+
 export interface KOPointsBreakdown { advance: number; score: number; total: number }
 
 // Puntos de mata-mata de un participante. Compara su bracket (que fluye según sus
@@ -159,6 +166,7 @@ export function computeKnockoutPoints(
 
   let advance = 0, score = 0;
   for (const id of KNOCKOUT_MATCH_IDS) {
+    if (NON_SCORING_MATCH_IDS.has(id)) continue; // no suma puntos, pero ya alimentó el bracket
     const real = realB[id];
     const realScore = realScores[String(id)];
     if (!real || real.adv === undefined || !realScore) continue; // sin resultado real
