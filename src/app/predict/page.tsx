@@ -7,7 +7,7 @@ import {
   getTeamByCode, getMatchById, type Match, type Team,
 } from '@/lib/matchData';
 import { calcMatchPoints, calcGroupPositionPoints, computeKnockoutPoints, resolveBracket,
-  ROUND_RULES, derivedWinner, type Side } from '@/lib/scoring';
+  buildFlowScores, NON_SCORING_MATCH_IDS, ROUND_RULES, derivedWinner, type Side } from '@/lib/scoring';
 import { PREDICTIONS_DEADLINE_ISO, GROUP_POS_DEADLINE_ISO, KNOCKOUT_DEADLINE_ISO } from '@/lib/config';
 import { Flag } from '@/components/Flag';
 import { BracketLayout, BRACKET } from '@/components/Bracket';
@@ -221,7 +221,10 @@ function KnockoutCard({ match, homeCode, awayCode, realAdvCode, pending, result,
   const myAdv = !ready || incomplete ? undefined
     : isDraw ? (w === 'home' ? homeCode : awayCode)
     : (parseInt(h) > parseInt(a) ? homeCode : awayCode);
-  const advRight = isPlayed && realAdvCode ? myAdv === realAdvCode : null;
+  // Los partidos que no otorgan puntos (jugados antes del cierre) no muestran
+  // acierto/fallo: el participante no pudo pronosticarlos.
+  const nonScoring = NON_SCORING_MATCH_IDS.has(match.id);
+  const advRight = !nonScoring && isPlayed && realAdvCode ? myAdv === realAdvCode : null;
 
   function handleSave() {
     if (!ready || incomplete) return;
@@ -433,8 +436,10 @@ function PredictContent() {
       if (isNaN(hn) || isNaN(an)) continue;
       scoreMap[String(id)] = { home: hn, away: an, ...(v.w ? { winner: v.w } : {}) };
     }
-    return resolveBracket(r32Teams, scoreMap);
-  }, [koPending, r32Teams]);
+    // Rellena con resultados reales las llaves jugadas que el participante no pudo
+    // pronosticar, para que no se bloquee el resto del bracket (ver buildFlowScores).
+    return resolveBracket(r32Teams, buildFlowScores(scoreMap, results));
+  }, [koPending, r32Teams, results]);
 
   // Bracket real (para mostrar aciertos por llave).
   const koRealSlots = useMemo(() => {

@@ -143,6 +143,29 @@ export const NON_SCORING_MATCH_IDS = new Set<number>([
   73, // 16avos Sudáfrica vs Canadá (28 jun 2026): se jugó antes de cerrar pronósticos
 ]);
 
+// Construye el mapa de marcadores que ALIMENTA el bracket de un participante.
+// Bug de cascada: quien entró DESPUÉS de que un partido se jugó/bloqueó (p.ej.
+// Sudáfrica-Canadá, match 73) no pudo pronosticarlo, y como el ganador de esa llave
+// alimenta las siguientes, se quedaba sin equipos —y por tanto bloqueado— en toda la
+// rama de abajo. Para destrabarlo, SOLO cuando el participante NO tiene predicción de
+// una llave ya jugada, se rellena el flujo con el resultado real, de modo que las
+// llaves siguientes sí tengan equipos y se puedan llenar.
+// OJO: esto es SOLO para el flujo del bracket (qué equipos llegan a cada llave); NO
+// cuenta como pronóstico del participante (los puntos por marcador/avance se calculan
+// aparte, únicamente con sus predicciones propias). A quien SÍ pronosticó la llave no
+// se le toca: su elección (acertada o no) sigue arrastrando como siempre.
+export function buildFlowScores(
+  ownScores: KOScoreMap,
+  results: Record<string, { home: number; away: number; played?: boolean; winner?: Side }>,
+): KOScoreMap {
+  const flow: KOScoreMap = { ...ownScores };
+  for (const [id, r] of Object.entries(results)) {
+    if (r.played === false) continue; // sin resultado real todavía: no rellena flujo
+    if (!flow[id]) flow[id] = { home: r.home, away: r.away, ...(r.winner ? { winner: r.winner } : {}) };
+  }
+  return flow;
+}
+
 export interface KOPointsBreakdown { advance: number; score: number; total: number }
 
 // Puntos de mata-mata de un participante. Compara su bracket (que fluye según sus
@@ -162,7 +185,9 @@ export function computeKnockoutPoints(
     realScores[id] = { home: r.home, away: r.away, ...(r.winner ? { winner: r.winner } : {}) };
   }
   const realB = resolveBracket(r32Teams, realScores);
-  const predB = resolveBracket(r32Teams, scorePreds);
+  // El bracket del participante fluye con sus predicciones, pero rellenando con el
+  // resultado real las llaves jugadas que no pudo pronosticar (ver buildFlowScores).
+  const predB = resolveBracket(r32Teams, buildFlowScores(scorePreds, results));
 
   let advance = 0, score = 0;
   for (const id of KNOCKOUT_MATCH_IDS) {
